@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Math Creature Battler</title>
+    <!-- Cloud save: copy firebase-config.sample.js → firebase-config.js and fill in Firebase Console config -->
+    <script src="firebase-config.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script>window.MathJax = { tex: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] } };</script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
+        .animate-shake { animation: shake 0.4s ease-in-out; }
+        @keyframes attack-p { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-40px); } }
+        .animate-attack-p { animation: attack-p 0.3s ease-in-out; }
+        @keyframes attack-e { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(40px); } }
+        .animate-attack-e { animation: attack-e 0.3s ease-in-out; }
+        .health-fill { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        .h-dvh { height: 100dvh; }
+        /* Plotly fills this box; keeps charts inside the solution modal */
+        #plot-container:not(.hidden) {
+            width: 100%;
+            max-width: 100%;
+            height: min(38vh, 280px);
+            max-height: min(38vh, 280px);
+            min-height: 0;
+            overflow: hidden;
+        }
+        @keyframes quest-glow { 0%, 100% { filter: drop-shadow(0 0 6px rgba(250, 204, 21, 0.9)); } 50% { filter: drop-shadow(0 0 14px rgba(250, 204, 21, 1)); } }
+        .quest-node-current { animation: quest-glow 2.2s ease-in-out infinite; }
+        .quest-map-wrap { min-height: 0; }
+        #cloud-sync-badge:not(.hidden) { pointer-events: auto; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans h-dvh w-screen overflow-hidden flex flex-col">
+
+    <!-- REGRESSION MONITOR -->
+    <div id="test-panel" class="fixed top-0 left-0 right-0 bg-black bg-opacity-95 text-[9px] font-mono p-1 flex gap-3 overflow-x-auto z-[200] border-b border-gray-700">
+        <span class="text-yellow-500 font-bold uppercase px-2 border-r border-gray-700">System Integrity:</span>
+        <div id="test-results" class="flex gap-4">
+            <span id="t-visuals">Visuals: Wait</span>
+            <span id="t-logic">MathJax: Wait</span>
+            <span id="t-vault">Vault: Wait</span>
+            <span id="t-scroll">Scroll: Wait</span>
+            <span id="t-brendan">Brendan: Wait</span>
+        </div>
+    </div>
+
+    <!-- MAIN UI SCREENS -->
+    <div id="login-screen" class="flex-1 flex flex-col items-center justify-center p-6 absolute inset-0 bg-gray-900 z-[100]">
+        <h1 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 mb-8 uppercase tracking-tighter italic">Math Battler</h1>
+        <div class="bg-gray-800 p-8 rounded-2xl border-4 border-gray-700 w-full max-w-sm shadow-2xl">
+            <input type="text" id="player-name-input" placeholder="Student Brendan" class="w-full bg-gray-900 border-2 border-gray-600 rounded-lg px-4 py-4 text-xl mb-4 text-center font-bold">
+            <button id="login-btn" onclick="handleLogin()" disabled class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-lg font-black text-xl uppercase transition-all disabled:opacity-50">Connecting...</button>
+            <div id="cloud-status-msg" class="mt-4 text-[10px] text-gray-500 font-mono text-center uppercase">Checking cloud connection…</div>
+        </div>
+    </div>
+
+    <!-- Cloud sync (map + battle); click = non-blocking reconcile -->
+    <button type="button" id="cloud-sync-badge" class="hidden fixed left-2 sm:left-3 top-12 sm:top-14 z-[120] max-w-[min(100vw-1rem,14rem)] flex items-center gap-2 rounded-lg border border-slate-600/90 bg-slate-900/95 px-2.5 py-1.5 text-left shadow-lg backdrop-blur-sm transition hover:border-sky-500/70 hover:bg-slate-800/95 focus:outline-none focus:ring-2 focus:ring-sky-500/50" title="Cloud sync — click to sync now" aria-live="polite">
+        <span id="cloud-sync-badge-icon" class="shrink-0 text-base" aria-hidden="true">☁</span>
+        <span class="min-w-0 flex flex-col leading-tight">
+            <span id="cloud-sync-badge-line1" class="text-[10px] sm:text-xs font-bold text-slate-200 truncate">Save</span>
+            <span id="cloud-sync-badge-line2" class="text-[9px] sm:text-[10px] text-slate-500 truncate">…</span>
+        </span>
+    </button>
+
+    <div id="level-screen" class="hidden absolute inset-0 z-50 flex flex-col bg-slate-950 pt-14 sm:pt-16 min-h-0">
+        <div class="shrink-0 flex justify-between items-center gap-3 px-4 sm:px-6 w-full max-w-4xl mx-auto pb-3">
+            <div class="bg-slate-900/90 border-2 border-indigo-500/80 px-3 sm:px-4 py-2 rounded-full font-bold text-sm sm:text-base shadow-lg shadow-indigo-900/40">
+                <span class="text-slate-400">Hero:</span> <span id="welcome-player-text" class="text-indigo-300"></span>
+            </div>
+            <button onclick="location.reload()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Logout</button>
+        </div>
+        <div class="shrink-0 px-4 sm:px-6 pt-2 pb-4 text-center max-w-xl mx-auto w-full border-b border-slate-800/80 bg-slate-950/50">
+            <h2 class="text-2xl sm:text-3xl font-black text-amber-200 tracking-tight drop-shadow-[0_0_12px_rgba(253,230,138,0.35)]">Math Quest</h2>
+            <p class="text-slate-400 text-sm sm:text-base mt-2 leading-snug px-2">Start at level 1 above. Higher levels lie further down the path.</p>
+        </div>
+        <div class="quest-map-wrap flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar px-2 sm:px-4 pb-8 flex justify-center min-h-0">
+            <div id="levels-container" class="w-full max-w-lg sm:max-w-xl py-3"></div>
+        </div>
+    </div>
+
+    <div id="battle-screen" class="hidden flex-1 flex flex-col bg-gray-900 relative w-full max-w-2xl mx-auto border-x border-gray-700 overflow-hidden">
+        <div class="flex-1 flex flex-col relative bg-slate-900 bg-opacity-20">
+            <!-- ENEMY AREA -->
+            <div class="flex-1 flex flex-col items-center justify-end pb-6 relative">
+                <div id="enemy-damage" class="damage-text top-10 right-4"></div>
+                <div class="absolute top-10 right-4 bg-gray-900 border border-red-500 p-2 rounded w-40 z-10">
+                    <div class="flex justify-between text-[10px] font-black text-red-400 uppercase"><span id="enemy-name"></span><span>Lv <span id="enemy-lvl-display"></span></span></div>
+                    <div class="w-full bg-gray-800 h-1.5 mt-1 rounded-full overflow-hidden"><div id="enemy-hp-bar" class="health-fill bg-red-500 h-full w-full"></div></div>
+                </div>
+                <div id="enemy-sprite" class="w-40 h-40 flex items-center justify-center"></div>
+            </div>
+            <!-- PLAYER AREA -->
+            <div class="flex-1 flex flex-col items-center justify-start pt-6 relative border-t border-gray-800">
+                <div id="player-damage" class="damage-text top-10 left-4"></div>
+                <div id="player-sprite" class="w-40 h-40 drop-shadow-2xl"></div>
+                <div class="absolute bottom-6 left-4 bg-gray-900 border border-blue-500 p-2 rounded w-40 z-10 shadow-xl">
+                    <div class="flex justify-between text-[10px] font-black text-blue-400 uppercase"><span>Math Wizard</span><span>HP</span></div>
+                    <div class="w-full bg-gray-800 h-1.5 mt-1 rounded-full overflow-hidden"><div id="player-hp-bar" class="health-fill bg-blue-500 h-full w-full"></div></div>
+                </div>
+            </div>
+            <div id="combat-feedback" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 border-white p-4 rounded-xl text-center z-40 opacity-0 pointer-events-none transition-all"></div>
+        </div>
+        <!-- INTERACTION PANEL (LOCKED HEIGHT) -->
+        <div id="interaction-panel" class="shrink-0 h-[45%] bg-gray-900 border-t-4 border-gray-700 flex flex-col p-4">
+            <div id="question-text" class="text-lg sm:text-xl font-bold text-yellow-300 text-center mb-4 min-h-[3rem]"></div>
+            <div id="action-area" class="flex-1 overflow-y-auto custom-scrollbar">
+                <div id="mcq-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-8"></div>
+                <form id="answer-form" class="hidden flex-col gap-2" onsubmit="handleInputAttack(event)">
+                    <textarea id="answer-input" rows="2" class="w-full bg-gray-800 border-2 border-gray-700 rounded p-3 text-white focus:border-blue-500 outline-none" placeholder="Explain your logic..."></textarea>
+                    <button type="submit" class="bg-red-600 py-3 rounded font-bold uppercase hover:bg-red-500">Cast Spell</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- OVERLAYS -->
+    <div id="detailed-feedback-overlay" class="hidden fixed inset-0 bg-black bg-opacity-95 z-[200] flex flex-col items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div class="bg-gray-800 border-2 border-green-500 p-4 sm:p-6 rounded-2xl max-w-xl w-full max-h-[min(92dvh,920px)] shadow-2xl flex flex-col gap-4 my-3 sm:my-4 min-h-0">
+            <h3 class="text-3xl font-black text-green-400 uppercase tracking-tighter text-center shrink-0">Solution</h3>
+            <div id="personalized-feedback" class="bg-gray-900 p-4 rounded border border-gray-700 italic text-yellow-200 shrink-0"></div>
+            <div id="ideal-explanation" class="bg-black p-4 rounded border border-gray-700 text-sm overflow-x-auto max-h-[min(28vh,200px)] overflow-y-auto shrink-0"></div>
+            <div id="plot-container" class="hidden w-full max-w-full rounded-lg border border-gray-600 bg-gray-950/80 shrink-0"></div>
+            <button onclick="closeDetailedFeedback()" class="w-full bg-green-600 hover:bg-green-500 py-4 rounded-xl font-black uppercase text-xl shrink-0">Continue</button>
+        </div>
+    </div>
+
+    <div id="result-overlay" class="hidden fixed inset-0 bg-black bg-opacity-90 z-[300] flex flex-col items-center justify-center p-6 text-center">
+        <h2 id="result-title" class="text-6xl font-black mb-4 uppercase italic tracking-tighter text-yellow-400">Victory</h2>
+        <p id="result-desc" class="text-2xl mb-8 opacity-80"></p>
+        <button onclick="returnToMenu()" class="bg-blue-600 px-12 py-4 rounded-full font-black text-2xl uppercase hover:scale-105 transition-transform shadow-2xl">Return to Map</button>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- ACTIVE INVARIANTS (THE BLACK BOX) ---
+        // Assets are anchored with specific IDs for regression tests to monitor detail levels.
+        const ASSETS = {
+            wizard: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="w-full h-full drop-shadow-[0_10px_20px_rgba(59,130,246,0.6)]">
+                    <path d="M 50 20 L 20 90 L 80 90 Z" fill="#1e3a8a" stroke="#60a5fa" stroke-width="2"/>
+                    <path d="M 35 90 L 50 40 L 65 90 Z" fill="#172554"/>
+                    <path d="M 50 5 C 25 5 25 45 50 45 C 75 45 75 5 50 5 Z" fill="#2563eb" stroke="#93c5fd" stroke-width="1"/>
+                    <circle id="WIZARD_FACE" cx="50" cy="25" r="10" fill="#111827"/>
+                    <polygon points="42,25 46,22 46,28" fill="#60a5fa" class="animate-pulse"/>
+                    <polygon points="58,25 54,22 54,28" fill="#60a5fa" class="animate-pulse"/>
+                    <line x1="85" y1="15" x2="60" y2="90" stroke="#8b5cf6" stroke-width="4" stroke-linecap="round"/>
+                    <g id="STAFF_WHEEL" style="transform-origin: 85px 15px;" class="animate-[spin_8s_linear_infinite]">
+                        <circle cx="85" cy="15" r="22" fill="none" stroke="#d8b4fe" stroke-width="1" stroke-dasharray="5,3" opacity="0.6"/>
+                        <circle cx="85" cy="15" r="6" fill="#f3e8ff" style="filter: blur(1px)"/>
+                        <polygon points="85,-5 90,15 85,35 80,15" fill="#a855f7" opacity="0.8"/>
+                    </g>
+                </svg>`,
+            slime: `<svg viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_0_20px_rgba(34,197,94,0.6)]">
+                    <path d="M 15 80 Q 5 95 20 95 Q 30 105 40 95 Q 50 105 60 95 Q 70 105 80 95 Q 95 95 85 80 Z" fill="#14532d"/>
+                    <path d="M 15 80 C 5 30 30 5 50 5 C 70 5 95 30 85 80 Z" fill="#22c55e" stroke="#4ade80" stroke-width="2" opacity="0.9"/>
+                    <polygon points="35,35 45,35 48,45 40,50 32,45" fill="#064e3b"/><polygon points="65,35 55,35 52,45 60,50 68,45" fill="#064e3b"/>
+                    <circle id="SLIME_EYE_L" cx="40" cy="40" r="4" fill="#bef264" class="animate-pulse" style="filter: drop-shadow(0 0 5px #bef264)"/>
+                    <circle id="SLIME_EYE_R" cx="60" cy="40" r="4" fill="#bef264" class="animate-pulse" style="filter: drop-shadow(0 0 5px #bef264)"/>
+                    <text x="50" y="65" font-family="monospace" font-size="28" font-weight="bold" fill="#166534" text-anchor="middle">X</text>
+                    <text id="AMBIENT_MATH" x="30" y="25" fill="#86efac" font-size="10" font-weight="bold" opacity="0.4">x + y</text>
+                </svg>`,
+            golem: `<svg viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_0_20px_rgba(249,115,22,0.6)]">
+                    <rect id="GOLEM_BODY" x="20" y="10" width="60" height="80" rx="5" fill="#7c2d12" stroke="#ea580c" stroke-width="3"/>
+                    <rect id="GOLEM_FRACTION_L" x="25" y="15" width="23" height="35" fill="#f97316" stroke="#fff" stroke-width="1"/> 
+                    <rect id="GOLEM_FRACTION_R" x="52" y="15" width="23" height="35" fill="#ea580c" stroke="#fff" stroke-width="1"/> 
+                    <text x="36.5" y="27" font-size="8" font-weight="bold" fill="#fff" text-anchor="middle">1</text>
+                    <line x1="30" y1="31" x2="43" y2="31" stroke="#fff" stroke-width="1.5"/>
+                    <text x="36.5" y="42" font-size="8" font-weight="bold" fill="#fff" text-anchor="middle">4</text>
+                    <text x="50" y="40" font-size="14" fill="#fff" text-anchor="middle">+</text>
+                    <text x="63.5" y="27" font-size="8" font-weight="bold" fill="#fff" text-anchor="middle">1</text>
+                    <line x1="57" y1="31" x2="70" y2="31" stroke="#fff" stroke-width="1.5"/>
+                    <text x="63.5" y="42" font-size="8" font-weight="bold" fill="#fff" text-anchor="middle">4</text>
+                    <text id="GOLEM_RESULT" x="50" y="75" font-family="sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">2/4 = 1/2</text>
+                    <circle id="GOLEM_EYE_L" cx="36" cy="28" r="2" fill="#fde047" class="animate-pulse"/>
+                    <circle id="GOLEM_EYE_R" cx="64" cy="28" r="2" fill="#fde047" class="animate-pulse"/>
+                </svg>`
+        };
+
+        /** Map layout (viewBox coords): level 1 at top, higher levels lower on the page. */
+        const QUEST_ROUTE = [
+            { x: 180, y: 142, name: "Algebra Slime", blurb: "Variables & expressions", hue: "#22c55e" },
+            { x: 92, y: 232, name: "Fraction Golem", blurb: "Parts & wholes", hue: "#ea580c" },
+            { x: 268, y: 322, name: "Percent Phantom", blurb: "Ratios & %", hue: "#a855f7" },
+            { x: 88, y: 412, name: "Ratio Wyrm", blurb: "Proportions", hue: "#ef4444" },
+            { x: 272, y: 502, name: "Geometry Serpent", blurb: "Angles & shapes", hue: "#14b8a6" },
+            { x: 96, y: 592, name: "Equation Knight", blurb: "Balance & solve", hue: "#3b82f6" },
+            { x: 264, y: 682, name: "Graph Gargoyle", blurb: "Plots & trends", hue: "#8b5cf6" },
+            { x: 100, y: 772, name: "Data Djinn", blurb: "Stats & charts", hue: "#f59e0b" },
+            { x: 260, y: 852, name: "Prime Archmage", blurb: "Factors & primes", hue: "#ec4899" },
+            { x: 180, y: 932, name: "Calculus Titan", blurb: "Final trial", hue: "#fbbf24" }
+        ];
+
+        function getQuestNode(level) {
+            const i = (level - 1) % QUEST_ROUTE.length;
+            return QUEST_ROUTE[i];
+        }
+
+        /** Compact SVG boss portrait for map nodes (viewBox 0 0 100 100). */
+        function mapBossPortrait(level) {
+            const i = (level - 1) % 10;
+            const portraits = [
+                `<ellipse cx="50" cy="58" rx="38" ry="28" fill="#14532d"/><ellipse cx="50" cy="42" rx="32" ry="30" fill="#22c55e"/><circle cx="40" cy="40" r="5" fill="#bef264"/><circle cx="60" cy="40" r="5" fill="#bef264"/><text x="50" y="72" font-size="22" font-weight="bold" fill="#166534" text-anchor="middle">x</text>`,
+                `<rect x="22" y="18" width="56" height="68" rx="6" fill="#7c2d12" stroke="#ea580c" stroke-width="2"/><rect x="28" y="24" width="20" height="28" fill="#f97316"/><rect x="52" y="24" width="20" height="28" fill="#ea580c"/><text x="38" y="42" font-size="10" fill="#fff" text-anchor="middle">1</text><line x1="32" y1="46" x2="44" y2="46" stroke="#fff"/><text x="38" y="54" font-size="10" fill="#fff" text-anchor="middle">4</text>`,
+                `<path d="M50 15 L85 85 L15 85 Z" fill="#581c87" opacity="0.9"/><circle cx="50" cy="48" r="14" fill="#c4b5fd"/><text x="50" y="54" font-size="16" font-weight="bold" fill="#4c1d95" text-anchor="middle">%</text>`,
+                `<path d="M20 70 Q50 20 80 70 Q50 55 20 70" fill="none" stroke="#dc2626" stroke-width="8" stroke-linecap="round"/><circle cx="35" cy="58" r="6" fill="#fca5a5"/><circle cx="65" cy="58" r="6" fill="#fca5a5"/>`,
+                `<polygon points="50,18 78,82 22,82" fill="none" stroke="#0d9488" stroke-width="4"/><line x1="50" y1="35" x2="50" y2="75" stroke="#99f6e4" stroke-width="3"/><circle cx="50" cy="48" r="8" fill="#5eead4"/>`,
+                `<rect x="28" y="35" width="44" height="50" rx="4" fill="#1e3a8a" stroke="#60a5fa" stroke-width="2"/><rect x="36" y="22" width="28" height="16" fill="#64748b"/><line x1="38" y1="52" x2="62" y2="52" stroke="#fff" stroke-width="2"/><text x="50" y="48" font-size="14" fill="#fff" text-anchor="middle">=</text>`,
+                `<rect x="18" y="38" width="64" height="40" fill="#312e81" stroke="#818cf8" rx="4"/><polyline points="28,58 40,48 52,62 64,42 78,55" fill="none" stroke="#a5b4fc" stroke-width="3"/><circle cx="40" cy="48" r="3" fill="#c7d2fe"/>`,
+                `<ellipse cx="50" cy="50" rx="35" ry="30" fill="#b45309" opacity="0.85"/><rect x="22" y="38" width="56" height="8" fill="#fde68a"/><rect x="30" y="52" width="12" height="14" fill="#fff" opacity="0.9"/><rect x="58" y="52" width="12" height="14" fill="#fff" opacity="0.9"/>`,
+                `<circle cx="50" cy="45" r="22" fill="#9d174d" stroke="#f9a8d4" stroke-width="2"/><path d="M50 25 L58 40 L50 38 L42 40 Z" fill="#fbcfe8"/><text x="50" y="52" font-size="14" font-weight="bold" fill="#fce7f3" text-anchor="middle">π</text>`,
+                `<rect x="25" y="30" width="50" height="48" rx="4" fill="#78350f" stroke="#fbbf24" stroke-width="3"/><circle cx="38" cy="48" r="6" fill="#fcd34d"/><circle cx="62" cy="48" r="6" fill="#fcd34d"/><path d="M35 68 L50 78 L65 68" fill="none" stroke="#f59e0b" stroke-width="4"/>`
+            ];
+            return portraits[i];
+        }
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'math-adventure-global';
+        const state = { playerName: null, unlockedLevels: 1, currentLevel: 1, playerHP: 100, enemyHP: 100, isAnimating: false, skillProfile: null, nextQuestion: null, activeQuestion: null, lastCloudSyncAt: null, cloudSyncError: null };
+        let cloudSyncManualInFlight = false;
+        const apiKey = "";
+        let db, auth, currentUser, isFirebaseReady = false;
+        let loginGateResolved = false;
+
+        function safeSet(id, val, prop = 'innerText') { const el = document.getElementById(id); if (el) { if (prop.includes('.')) { const parts = prop.split('.'); el[parts[0]][parts[1]] = val; } else { el[prop] = val; } } return el; }
+
+        function formatSyncAge(ts) {
+            if (ts == null) return "";
+            const s = Math.floor((Date.now() - ts) / 1000);
+            if (s < 8) return "just now";
+            if (s < 60) return `${s}s ago`;
+            const m = Math.floor(s / 60);
+            if (m < 60) return `${m}m ago`;
+            const h = Math.floor(m / 60);
+            return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
+        }
+
+        function updateCloudSyncBadge() {
+            const root = document.getElementById("cloud-sync-badge");
+            const l1 = document.getElementById("cloud-sync-badge-line1");
+            const l2 = document.getElementById("cloud-sync-badge-line2");
+            const icon = document.getElementById("cloud-sync-badge-icon");
+            if (!root || root.classList.contains("hidden") || !l1 || !l2 || !icon) return;
+
+            if (cloudSyncManualInFlight) {
+                icon.textContent = "↻";
+                l1.textContent = "Syncing…";
+                l2.textContent = "Runs in background";
+                return;
+            }
+
+            if (!isFirebaseReady || !db) {
+                icon.textContent = "💾";
+                l1.textContent = "Local save";
+                l2.textContent = state.lastCloudSyncAt ? `Saved ${formatSyncAge(state.lastCloudSyncAt)}` : "This browser only";
+                return;
+            }
+
+            if (state.cloudSyncError) {
+                icon.textContent = "⚠";
+                l1.textContent = "Sync issue";
+                l2.textContent = "Tap to retry";
+                return;
+            }
+
+            icon.textContent = "☁";
+            l1.textContent = "Cloud";
+            l2.textContent = state.lastCloudSyncAt
+                ? `Synced ${formatSyncAge(state.lastCloudSyncAt)}`
+                : "Tap to sync";
+        }
+
+        let cloudSyncBadgeTimeIntervalId = null;
+
+        function showCloudSyncBadge() {
+            const root = document.getElementById("cloud-sync-badge");
+            if (root) {
+                root.classList.remove("hidden");
+                updateCloudSyncBadge();
+                if (!cloudSyncBadgeTimeIntervalId) {
+                    cloudSyncBadgeTimeIntervalId = setInterval(() => {
+                        const b = document.getElementById("cloud-sync-badge");
+                        if (b && !b.classList.contains("hidden")) updateCloudSyncBadge();
+                    }, 25000);
+                }
+            }
+        }
+
+        /** Click handler: full reconcile; does not block the UI (async IIFE). */
+        function requestUserSync() {
+            if (!state.playerName) return;
+            if (cloudSyncManualInFlight) return;
+            cloudSyncManualInFlight = true;
+            state.cloudSyncError = null;
+            updateCloudSyncBadge();
+            void (async () => {
+                try {
+                    if (isFirebaseReady && db) {
+                        await reconcileProfileWithCloud();
+                    } else {
+                        saveLocalProfile(state.playerName);
+                        state.lastCloudSyncAt = Date.now();
+                        state.cloudSyncError = null;
+                    }
+                } catch (e) {
+                    console.warn("requestUserSync:", e);
+                    state.cloudSyncError = "failed";
+                } finally {
+                    cloudSyncManualInFlight = false;
+                    updateCloudSyncBadge();
+                }
+            })();
+        }
+
+        function profileStorageKey(name) {
+            return "mathbattler_profile_" + encodeURIComponent(name || "default");
+        }
+
+        /** Firestore document id cannot contain `/` (path separator). */
+        function safeProfileDocId(displayName) {
+            return String(displayName || "player").replace(/\//g, "_");
+        }
+
+        function loadLocalProfile(name) {
+            try {
+                const raw = localStorage.getItem(profileStorageKey(name));
+                if (!raw) return null;
+                const d = JSON.parse(raw);
+                if (!d || typeof d !== "object") return null;
+                if (typeof d.unlockedLevels === "number" && d.unlockedLevels >= 1) return d;
+                if (d.skillProfile != null && typeof d.skillProfile === "object" && Object.keys(d.skillProfile).length > 0) {
+                    return { ...d, unlockedLevels: Math.max(1, typeof d.unlockedLevels === "number" ? d.unlockedLevels : 1) };
+                }
+            } catch (e) { console.warn("loadLocalProfile", e); }
+            return null;
+        }
+
+        function saveLocalProfile(name) {
+            try {
+                if (typeof state.unlockedLevels !== "number" || state.unlockedLevels < 1) return;
+                const sp = state.skillProfile != null ? state.skillProfile : normalizeSkillProfile(null);
+                localStorage.setItem(profileStorageKey(name), JSON.stringify({
+                    unlockedLevels: state.unlockedLevels,
+                    skillProfile: sp,
+                    playerName: name
+                }));
+            } catch (e) { console.warn("saveLocalProfile", e); }
+        }
+
+        function normalizeSkillProfile(raw) {
+            const fallback = { "Algebra": { attempts: 0, corrects: 0 } };
+            if (!raw || typeof raw !== "object") return fallback;
+            const out = {};
+            for (const [topic, v] of Object.entries(raw)) {
+                if (v && typeof v === "object") {
+                    out[topic] = {
+                        attempts: typeof v.attempts === "number" ? v.attempts : (typeof v.a === "number" ? v.a : 0),
+                        corrects: typeof v.corrects === "number" ? v.corrects : (typeof v.c === "number" ? v.c : 0)
+                    };
+                }
+            }
+            return Object.keys(out).length ? out : fallback;
+        }
+
+        function mergeSkillProfiles(a, b) {
+            const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+            const out = {};
+            for (const k of keys) {
+                const va = a[k] || { attempts: 0, corrects: 0 };
+                const vb = b[k] || { attempts: 0, corrects: 0 };
+                out[k] = {
+                    attempts: Math.max(va.attempts ?? 0, vb.attempts ?? 0),
+                    corrects: Math.max(va.corrects ?? 0, vb.corrects ?? 0)
+                };
+            }
+            return Object.keys(out).length ? out : { "Algebra": { attempts: 0, corrects: 0 } };
+        }
+
+        /**
+         * Combine Firestore + localStorage so neither source can wipe the other.
+         * unlockedLevels = max(1, cloud, local); skills = per-topic max of stats.
+         */
+        function mergeProfileRecords(cloudDoc, localDoc) {
+            const c = cloudDoc && typeof cloudDoc === "object" ? cloudDoc : {};
+            const l = localDoc && typeof localDoc === "object" ? localDoc : {};
+            const ulCloud = typeof c.unlockedLevels === "number" && c.unlockedLevels >= 1 ? c.unlockedLevels : 0;
+            const ulLocal = typeof l.unlockedLevels === "number" && l.unlockedLevels >= 1 ? l.unlockedLevels : 0;
+            const unlockedLevels = Math.max(1, ulCloud, ulLocal);
+            const skillProfile = mergeSkillProfiles(
+                normalizeSkillProfile(c.skillProfile),
+                normalizeSkillProfile(l.skillProfile)
+            );
+            return { unlockedLevels, skillProfile };
+        }
+
+        async function persistMergedProfileToCloud(name, merged) {
+            if (!isFirebaseReady || !db) return false;
+            try {
+                const pRef = doc(db, "artifacts", appId, "public", "data", "playerProfiles", safeProfileDocId(name));
+                await setDoc(pRef, {
+                    unlockedLevels: merged.unlockedLevels,
+                    skillProfile: merged.skillProfile,
+                    displayName: name,
+                    lastSyncedAt: Date.now()
+                }, { merge: true });
+                state.lastCloudSyncAt = Date.now();
+                state.cloudSyncError = null;
+                updateCloudSyncBadge();
+                return true;
+            } catch (e) {
+                console.warn("persistMergedProfileToCloud:", e);
+                state.cloudSyncError = "failed";
+                updateCloudSyncBadge();
+                return false;
+            }
+        }
+
+        /** Push current session state to Firestore (merge). Call after progress changes and on a timer. */
+        async function syncCurrentProfileToCloud() {
+            if (!isFirebaseReady || !db || !state.playerName) return;
+            const name = state.playerName;
+            const sp = state.skillProfile != null ? state.skillProfile : normalizeSkillProfile(null);
+            if (typeof state.unlockedLevels !== "number" || state.unlockedLevels < 1) return;
+            try {
+                await setDoc(doc(db, "artifacts", appId, "public", "data", "playerProfiles", safeProfileDocId(name)), {
+                    unlockedLevels: state.unlockedLevels,
+                    skillProfile: sp,
+                    displayName: name,
+                    lastSyncedAt: Date.now()
+                }, { merge: true });
+                state.lastCloudSyncAt = Date.now();
+                state.cloudSyncError = null;
+                updateCloudSyncBadge();
+            } catch (e) {
+                console.warn("syncCurrentProfileToCloud:", e);
+                state.cloudSyncError = "failed";
+                updateCloudSyncBadge();
+            }
+        }
+
+        async function fetchCloudProfileDoc(name, retries = 2) {
+            if (!isFirebaseReady || !db) return null;
+            let lastErr;
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                try {
+                    const pRef = doc(db, "artifacts", appId, "public", "data", "playerProfiles", safeProfileDocId(name));
+                    const snap = await getDoc(pRef);
+                    return snap.exists() ? snap.data() : null;
+                } catch (e) {
+                    lastErr = e;
+                    if (attempt < retries) await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+                }
+            }
+            console.warn("fetchCloudProfileDoc:", lastErr);
+            return null;
+        }
+
+        /**
+         * Merge cloud + localStorage + in-memory state (max progress), save locally, upload.
+         * Use when Firebase connects late or tab becomes visible again.
+         */
+        async function reconcileProfileWithCloud() {
+            if (!isFirebaseReady || !db || !state.playerName) return;
+            const name = state.playerName;
+            const cloud = await fetchCloudProfileDoc(name, 1);
+            const local = loadLocalProfile(name);
+            const session = {
+                unlockedLevels: state.unlockedLevels,
+                skillProfile: state.skillProfile != null ? state.skillProfile : normalizeSkillProfile(null)
+            };
+            const m1 = mergeProfileRecords(cloud, local);
+            const merged = mergeProfileRecords(m1, session);
+            state.unlockedLevels = merged.unlockedLevels;
+            state.skillProfile = merged.skillProfile;
+            saveLocalProfile(name);
+            await persistMergedProfileToCloud(name, merged);
+            const ls = document.getElementById("level-screen");
+            if (ls && !ls.classList.contains("hidden")) renderLevelMenu();
+        }
+
+        let cloudSyncIntervalId = null;
+
+        function startCloudSyncHeartbeat() {
+            if (cloudSyncIntervalId) clearInterval(cloudSyncIntervalId);
+            cloudSyncIntervalId = setInterval(() => {
+                syncCurrentProfileToCloud();
+            }, 45000);
+        }
+
+        /** One-time: enable Start button and show accurate cloud / local status. */
+        function resolveLoginGate(kind) {
+            if (loginGateResolved) return;
+            loginGateResolved = true;
+            const msg = {
+                firebase_ok: "Online save ready — your progress can sync to your account.",
+                firebase_fail: "Can't reach online save — using progress stored on this device.",
+                no_config: "Playing on this device only — progress stays in this browser until online save is set up.",
+                timeout: "Online save is slow or blocked — using progress stored on this device."
+            };
+            safeSet("cloud-status-msg", msg[kind] || msg.timeout, "innerText");
+            const el = document.getElementById("cloud-status-msg");
+            if (el) el.className = "mt-4 text-[10px] font-mono text-center uppercase " + (kind === "firebase_ok" ? "text-emerald-400" : "text-amber-400/90");
+            safeSet("login-btn", "START ADVENTURE").disabled = false;
+        }
+
+        // --- REGRESSION MONITORING ---
+        function setRegressionVaultSkipped() {
+            safeSet("t-vault", "VAULT: local OK");
+            const el = document.getElementById("t-vault");
+            if (el) {
+                el.className = "text-emerald-400 font-bold";
+                el.title = "No Firebase in this build — saves stay in this browser. Expected, not a failure.";
+            }
+            safeSet("t-brendan", "PROFILE: local OK");
+            const b = document.getElementById("t-brendan");
+            if (b) {
+                b.className = "text-emerald-400 font-bold";
+                b.title = "Cloud profile sync is not configured; data is local-only. Expected.";
+            }
+        }
+
+        function setRegressionVaultFailed() {
+            safeSet("t-vault", "VAULT: FAIL");
+            const el = document.getElementById("t-vault");
+            if (el) el.className = "text-red-400 font-bold";
+            safeSet("t-brendan", "PROFILE: FAIL");
+            const br = document.getElementById("t-brendan");
+            if (br) br.className = "text-red-400 font-bold";
+        }
+
+        function setRegressionVaultStalled() {
+            safeSet("t-vault", "VAULT: still connecting…");
+            const el = document.getElementById("t-vault");
+            if (el) {
+                el.className = "text-amber-400 font-bold";
+                el.title = "Firebase is taking longer than usual; you can still tap Start below.";
+            }
+            safeSet("t-brendan", "PROFILE: waiting on cloud…");
+            const br = document.getElementById("t-brendan");
+            if (br) {
+                br.className = "text-amber-400 font-bold";
+                br.title = "Waiting for cloud connection before profile seed check.";
+            }
+        }
+
+        async function runRegressions() {
+            const visualsOk = ASSETS.slime.includes("SLIME_EYE_L") && ASSETS.wizard.includes("STAFF_WHEEL") && ASSETS.golem.includes("GOLEM_BODY");
+            safeSet('t-visuals', visualsOk ? 'VISUALS: PASS' : 'VISUALS: FAIL');
+            document.getElementById('t-visuals').className = visualsOk ? "text-green-400 font-bold" : "text-red-400 font-bold";
+            
+            if (window.MathJax) {
+                safeSet('t-logic', 'MATHJAX: PASS');
+                document.getElementById('t-logic').className = "text-green-400";
+            }
+
+            const panel = document.getElementById('interaction-panel');
+            const scrollOk = panel && window.getComputedStyle(panel).flexShrink === '0';
+            safeSet('t-scroll', scrollOk ? 'SCROLL: PASS' : 'SCROLL: FAIL');
+            document.getElementById('t-scroll').className = scrollOk ? "text-green-400" : "text-red-400";
+        }
+
+        async function connectFirebaseAndSeedRegression() {
+            const app = initializeApp(JSON.parse(__firebase_config));
+            auth = getAuth(app);
+            db = getFirestore(app);
+            await (typeof __initial_auth_token !== "undefined" ? signInWithCustomToken(auth, __initial_auth_token) : signInAnonymously(auth));
+            currentUser = auth.currentUser;
+
+            const testRef = doc(db, "artifacts", appId, "public", "data", "healthcheck", "status");
+            await setDoc(testRef, { ts: Date.now() }, { merge: true });
+            isFirebaseReady = true;
+            safeSet("t-vault", "VAULT: PASS");
+            document.getElementById("t-vault").className = "text-green-400";
+
+            try {
+                const brendanRef = doc(db, "artifacts", appId, "public", "data", "playerProfiles", "Student Brendan");
+                let bSnap = await getDoc(brendanRef);
+                if (!bSnap.exists()) {
+                    await setDoc(brendanRef, { unlockedLevels: 1, skillProfile: { "Math": { attempts: 0, corrects: 0 } } });
+                    bSnap = await getDoc(brendanRef);
+                }
+                if (bSnap.exists()) {
+                    safeSet("t-brendan", "BRENDAN: PASS");
+                    document.getElementById("t-brendan").className = "text-green-400";
+                } else {
+                    safeSet("t-brendan", "BRENDAN: FAIL");
+                    document.getElementById("t-brendan").className = "text-red-400 font-bold";
+                }
+            } catch (seedErr) {
+                console.warn("Brendan seed handshake:", seedErr);
+                safeSet("t-brendan", "BRENDAN: FAIL");
+                const br = document.getElementById("t-brendan");
+                if (br) br.className = "text-red-400 font-bold";
+            }
+
+            resolveLoginGate("firebase_ok");
+            setTimeout(() => {
+                if (state.playerName && isFirebaseReady) reconcileProfileWithCloud();
+            }, 150);
+        }
+
+        // --- AUTH & VAULT HANDSHAKE ---
+        async function initFirebase() {
+            setTimeout(() => {
+                if (!loginGateResolved) {
+                    setRegressionVaultStalled();
+                    resolveLoginGate("timeout");
+                }
+            }, 8000);
+            if (typeof __firebase_config === "undefined") {
+                setRegressionVaultSkipped();
+                resolveLoginGate("no_config");
+                return;
+            }
+            try {
+                await connectFirebaseAndSeedRegression();
+            } catch (e) {
+                console.error(e);
+                isFirebaseReady = false;
+                setRegressionVaultFailed();
+                resolveLoginGate("firebase_fail");
+            }
+        }
+
+        document.addEventListener("visibilitychange", () => {
+            if (!state.playerName) return;
+            if (document.visibilityState === "hidden") {
+                syncCurrentProfileToCloud();
+            } else if (document.visibilityState === "visible" && isFirebaseReady) {
+                reconcileProfileWithCloud();
+            }
+        });
+
+        window.addEventListener("pagehide", () => {
+            if (state.playerName) syncCurrentProfileToCloud();
+        });
+
+        window.handleLogin = async () => {
+            const name = document.getElementById('player-name-input').value.trim() || 'Student Brendan';
+            state.playerName = name;
+            const loginBtn = document.getElementById('login-btn');
+            loginBtn.innerText = "ACCESSING...";
+            loginBtn.disabled = true;
+
+            const localSnapshot = loadLocalProfile(name);
+            const cloudRetries = localSnapshot ? 1 : 3;
+            const cloudSnapshot = isFirebaseReady && db ? await fetchCloudProfileDoc(name, cloudRetries) : null;
+
+            const merged = mergeProfileRecords(cloudSnapshot, localSnapshot);
+            state.unlockedLevels = merged.unlockedLevels;
+            state.skillProfile = merged.skillProfile;
+            saveLocalProfile(name);
+
+            if (isFirebaseReady && db) {
+                await persistMergedProfileToCloud(name, merged);
+            } else {
+                state.lastCloudSyncAt = Date.now();
+                state.cloudSyncError = null;
+            }
+
+            safeSet('welcome-player-text', name);
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('level-screen').classList.remove('hidden');
+            safeSet('player-sprite', ASSETS.wizard, 'innerHTML');
+            renderLevelMenu();
+            prefetchQuestion(); // Non-blocking: Fetches in the background while the user views the map
+            showCloudSyncBadge();
+            startCloudSyncHeartbeat();
+            void syncCurrentProfileToCloud();
+        };
+
+        function renderLevelMenu() {
+            const container = document.getElementById('levels-container');
+            const total = Math.max(10, state.unlockedLevels + 1);
+            const vbW = 360;
+            const vbH = 1040;
+            const pts = [];
+            for (let i = 0; i < total; i++) {
+                const q = QUEST_ROUTE[i % QUEST_ROUTE.length];
+                const lap = Math.floor(i / QUEST_ROUTE.length);
+                pts.push({ x: q.x + lap * 12, y: q.y + lap * 48 });
+            }
+            const curveBulge = 22;
+            let pathD = `M ${pts[0].x} ${pts[0].y}`;
+            for (let i = 1; i < pts.length; i++) {
+                const p0 = pts[i - 1], p1 = pts[i];
+                const mx = (p0.x + p1.x) / 2, my = (p0.y + p1.y) / 2 + curveBulge;
+                pathD += ` Q ${mx} ${my} ${p1.x} ${p1.y}`;
+            }
+            const unlocked = state.unlockedLevels;
+            let pathProgress = "";
+            if (unlocked >= 2) {
+                pathProgress = `M ${pts[0].x} ${pts[0].y}`;
+                for (let i = 1; i < unlocked && i < pts.length; i++) {
+                    const p0 = pts[i - 1], p1 = pts[i];
+                    const mx = (p0.x + p1.x) / 2, my = (p0.y + p1.y) / 2 + curveBulge;
+                    pathProgress += ` Q ${mx} ${my} ${p1.x} ${p1.y}`;
+                }
+            }
+
+            const nodesHtml = pts.map((p, idx) => {
+                const level = idx + 1;
+                const open = level <= unlocked;
+                const isCurrent = open && level === unlocked;
+                const meta = getQuestNode(level);
+                const ring = open ? (isCurrent ? "#facc15" : "#38bdf8") : "#475569";
+                const fill = open ? "rgba(15,23,42,0.92)" : "rgba(30,41,59,0.75)";
+                const cursor = open ? "pointer" : "not-allowed";
+                const opacity = open ? 1 : 0.42;
+                const glow = isCurrent ? ' class="quest-node-current"' : "";
+                const lock = open ? "" : `<g opacity="0.92"><rect x="${p.x - 12}" y="${p.y - 92}" width="24" height="20" rx="3" fill="#1e293b" stroke="#64748b" stroke-width="2"/><path d="M ${p.x - 8} ${p.y - 92} V${p.y - 102} Q ${p.x} ${p.y - 112} ${p.x + 8} ${p.y - 102} V${p.y - 92}" fill="none" stroke="#94a3b8" stroke-width="2"/><circle cx="${p.x}" cy="${p.y - 84}" r="3" fill="#475569"/></g>`;
+                const nameFs = meta.name.length > 16 ? 7.5 : 9;
+                return `
+                <g${glow} data-level="${level}" style="cursor:${cursor};opacity:${opacity}">
+                    <title>${meta.name} — ${meta.blurb}</title>
+                    <circle cx="${p.x}" cy="${p.y}" r="46" fill="${fill}" stroke="${ring}" stroke-width="${open ? 4 : 3}"/>
+                    <g transform="translate(${p.x - 50},${p.y - 52}) scale(0.52)">${mapBossPortrait(level)}</g>
+                    <text x="${p.x}" y="${p.y + 58}" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="bold" font-family="system-ui,sans-serif">${level}</text>
+                    <text x="${p.x}" y="${p.y + 74}" text-anchor="middle" fill="${meta.hue}" font-size="${nameFs}" font-weight="700" font-family="system-ui,sans-serif">${meta.name}</text>
+                    ${lock}
+                </g>`;
+            }).join("");
+
+            container.innerHTML = `
+            <svg viewBox="0 0 ${vbW} ${vbH}" class="w-full h-auto drop-shadow-2xl select-none" xmlns="http://www.w3.org/2000/svg" aria-label="Quest map">
+                <defs>
+                    <linearGradient id="quest-sky" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" style="stop-color:#0f172a"/><stop offset="45%" style="stop-color:#1e1b4b"/><stop offset="100%" style="stop-color:#312e81"/>
+                    </linearGradient>
+                    <linearGradient id="quest-ground" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" style="stop-color:#14532d"/><stop offset="100%" style="stop-color:#052e16"/>
+                    </linearGradient>
+                    <filter id="quest-soft-glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+                    </filter>
+                </defs>
+                <rect width="${vbW}" height="${vbH}" fill="url(#quest-sky)"/>
+                <path d="M0 ${vbH - 120} Q90 ${vbH - 160} 180 ${vbH - 130} T360 ${vbH - 110} L360 ${vbH} L0 ${vbH} Z" fill="url(#quest-ground)" opacity="0.85"/>
+                <path d="M0 ${vbH - 95} Q120 ${vbH - 125} 240 ${vbH - 85} L360 ${vbH - 75} L360 ${vbH} L0 ${vbH} Z" fill="#166534" opacity="0.35"/>
+                <path d="${pathD}" fill="none" stroke="#334155" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+                <path d="${pathD}" fill="none" stroke="#1e293b" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+                ${pathProgress ? `<path d="${pathProgress}" fill="none" stroke="#fbbf24" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#quest-soft-glow)"/>` : ""}
+                ${unlocked >= 1 ? `<circle cx="${pts[Math.min(unlocked - 1, pts.length - 1)].x}" cy="${pts[Math.min(unlocked - 1, pts.length - 1)].y}" r="6" fill="#fbbf24" stroke="#fef3c7" stroke-width="2" opacity="0.95"/>` : ""}
+                ${nodesHtml}
+            </svg>`;
+
+            container.querySelectorAll("g[data-level]").forEach((g) => {
+                const lv = parseInt(g.getAttribute("data-level"), 10);
+                g.addEventListener("click", () => {
+                    if (lv <= state.unlockedLevels) startGame(lv);
+                });
+                g.addEventListener("keydown", (e) => {
+                    if ((e.key === "Enter" || e.key === " ") && lv <= state.unlockedLevels) { e.preventDefault(); startGame(lv); }
+                });
+                if (lv <= state.unlockedLevels) {
+                    g.setAttribute("tabindex", "0");
+                    g.setAttribute("role", "button");
+                }
+            });
+            const mapScroll = document.querySelector(".quest-map-wrap");
+            if (mapScroll) mapScroll.scrollTop = 0;
+        }
+
+        let fetchPromise = null;
+
+        async function fetchWithBackoff(url, options, retries = 5) {
+            let delay = 1000;
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+                    return response;
+                } catch (err) {
+                    if (i === retries - 1) throw err;
+                    await new Promise(res => setTimeout(res, delay));
+                    delay *= 2;
+                }
+            }
+        }
+
+        async function prefetchQuestion() {
+            // Prevent duplicate network calls if one is already running
+            if (fetchPromise) return fetchPromise;
+
+            fetchPromise = (async () => {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                
+                // --- RESTORED DYNAMIC INTELLIGENCE ---
+                // 1. Calculate Difficulty Matrix
+                const diff = state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8");
+                
+                // 2. Analyze Player Profile for Weaknesses
+                let weakestTopic = "Algebra";
+                if (state.skillProfile) {
+                    let lowestRatio = 1.1;
+                    Object.entries(state.skillProfile).forEach(([topic, data]) => {
+                        const ratio = data.attempts === 0 ? 0 : data.corrects / data.attempts;
+                        if (ratio < lowestRatio) { 
+                            lowestRatio = ratio; 
+                            weakestTopic = topic; 
+                        }
+                    });
+                }
+                
+                // 3. Construct the Context-Aware Prompt
+                const prompt = `[SEED: ${Date.now()}] Generate a unique ${diff} math question explicitly focusing on the concept of "${weakestTopic}". IMPORTANT: When using units like cm, m, or percent, ALWAYS wrap them in \\text{} (e.g., $25 \\text{ cm}$) to fix italicization formatting. Return JSON ONLY. Use LaTeX for text and ideal_explanation.
+
+For plotly_spec: when a graph clarifies the correct answer (e.g. linear relationship, area model, comparing quantities), set a JSON STRING value (escaped inside the outer JSON) with Plotly-compatible content, e.g. {"data":[{"x":[0,1,2],"y":[2,4,6],"type":"scatter","mode":"lines+markers","name":"y=2x"}],"layout":{"title":"Why the answer works","height":260}}. Use numeric arrays only. If no useful graph exists, use an empty string "".`;
+
+                try {
+                    const res = await fetchWithBackoff(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: {
+                                responseMimeType: "application/json",
+                                responseSchema: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        topic_category: { type: "STRING" },
+                                        text: { type: "STRING" },
+                                        answer: { type: "STRING" },
+                                        ideal_explanation: { type: "STRING" },
+                                        plotly_spec: { type: "STRING", description: "JSON string: { data: [...traces], layout?: {} } for Plotly, or empty string" },
+                                        type: { type: "STRING" },
+                                        options: { type: "ARRAY", items: { type: "STRING" } }
+                                    },
+                                    required: ["topic_category", "text", "answer", "ideal_explanation", "plotly_spec", "type", "options"]
+                                }
+                            }
+                        })
+                    });
+                    const data = await res.json();
+                    state.nextQuestion = JSON.parse(data.candidates[0].content.parts[0].text);
+                } catch (e) { 
+                    // Failsafe fallback
+                    state.nextQuestion = {
+                        text: "Solve $x+5=12$",
+                        answer: "7",
+                        ideal_explanation: "Subtract $5$ from both sides: $x = 12 - 5 = 7$.",
+                        plotly_spec: '{"data":[{"x":[5,12],"y":[7,7],"type":"scatter","mode":"lines+markers","name":"value"}],"layout":{"title":"Same value each side","height":240}}',
+                        type: "mcq",
+                        options: ["5", "7", "12", "17"]
+                    }; 
+                } finally {
+                    fetchPromise = null;
+                }
+            })();
+            return fetchPromise;
+        }
+
+        async function startGame(level) {
+            state.currentLevel = level;
+            state.playerHP = 100; state.enemyHP = 100;
+            const qMeta = getQuestNode(level);
+            safeSet('enemy-name', qMeta.name);
+            safeSet('enemy-lvl-display', level);
+            const useGolem = level % 2 === 0;
+            safeSet('enemy-sprite', useGolem ? ASSETS.golem : ASSETS.slime, 'innerHTML');
+            updateHP();
+            
+            // Instantly transition the UI so the user isn't stuck waiting
+            document.getElementById('level-screen').classList.add('hidden');
+            document.getElementById('battle-screen').classList.remove('hidden');
+
+            if (!state.nextQuestion) {
+                document.getElementById('question-text').innerText = "Summoning math magic...";
+                document.getElementById('mcq-grid').innerHTML = '';
+                await prefetchQuestion();
+            }
+            loadQuestion();
+        }
+
+        function loadQuestion() {
+            const q = state.nextQuestion;
+            state.nextQuestion = null; // Consume the question immediately
+            state.activeQuestion = q;
+            
+            // Prefetch next one for flow
+            prefetchQuestion();
+            
+            const qEl = document.getElementById('question-text');
+            qEl.innerText = q.text;
+            MathJax.typesetPromise([qEl]);
+            
+            const grid = document.getElementById('mcq-grid');
+            grid.innerHTML = '';
+            q.options.forEach(opt => {
+                const b = document.createElement('button');
+                let display = opt.toString().includes('^') || opt.toString().includes('\\') ? `$${opt}$` : opt;
+                b.innerHTML = `<span>${display}</span>`;
+                b.className = "bg-blue-800 hover:bg-blue-600 p-4 rounded-lg font-bold border-2 border-blue-400 transition-all uppercase text-sm min-h-[3rem]";
+                b.onclick = () => { if(state.isAnimating) return; document.querySelectorAll('#mcq-grid button').forEach(x=>x.disabled=true); executeAttack(opt.toString().trim() === q.answer.toString().trim()); };
+                grid.appendChild(b);
+            });
+            MathJax.typesetPromise([grid]);
+        }
+
+        function updateHP() {
+            safeSet('player-hp-bar', `${state.playerHP}%`, 'style.width');
+            safeSet('enemy-hp-bar', `${state.enemyHP}%`, 'style.width');
+        }
+
+        function showDamage(id, amt) {
+            const el = document.getElementById(id);
+            el.innerText = `-${amt}`;
+            el.classList.add('animate-damage');
+            setTimeout(() => el.classList.remove('animate-damage'), 1000);
+        }
+
+
+        function parsePlotlySpec(raw) {
+            if (!raw || typeof raw !== "string" || !raw.trim()) return null;
+            try {
+                const spec = JSON.parse(raw);
+                const data = Array.isArray(spec.data) ? spec.data : null;
+                if (!data || !data.length) return null;
+                return {
+                    data,
+                    layout: typeof spec.layout === "object" && spec.layout !== null ? spec.layout : {}
+                };
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function showDetailedFeedback(msg) {
+            safeSet('personalized-feedback', msg);
+
+            const q = state.activeQuestion || {};
+            const ideal = q.ideal_explanation || "";
+            const explanationEl = document.getElementById("ideal-explanation");
+            if (explanationEl) {
+                explanationEl.innerHTML = ideal;
+                if (window.MathJax) MathJax.typesetPromise([explanationEl]);
+            }
+
+            const plotContainer = document.getElementById("plot-container");
+            const parsed = typeof Plotly !== "undefined" ? parsePlotlySpec(q.plotly_spec) : null;
+            if (plotContainer) {
+                if (typeof Plotly !== "undefined") Plotly.purge(plotContainer);
+                if (parsed && typeof Plotly !== "undefined") {
+                    plotContainer.classList.remove("hidden");
+                    const baseLayout = {
+                        autosize: true,
+                        margin: { t: 28, b: 40, l: 44, r: 20 },
+                        paper_bgcolor: "transparent",
+                        plot_bgcolor: "rgba(15,23,42,0.6)",
+                        font: { color: "#e5e7eb", size: 11 },
+                        xaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true },
+                        yaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true }
+                    };
+                    const layout = { ...baseLayout, ...parsed.layout, autosize: true };
+                    delete layout.height;
+                    delete layout.width;
+                    Plotly.newPlot(plotContainer, parsed.data, layout, {
+                        displayModeBar: false,
+                        responsive: true
+                    });
+                    requestAnimationFrame(() => {
+                        try {
+                            Plotly.Plots.resize(plotContainer);
+                        } catch (_) {}
+                    });
+                } else {
+                    plotContainer.classList.add("hidden");
+                }
+            }
+
+            document.getElementById("detailed-feedback-overlay").classList.remove("hidden");
+        }
+        function executeAttack(isCorrect) {
+            state.isAnimating = true;
+            const bS = document.getElementById('battle-screen'), fb = document.getElementById('combat-feedback');
+            fb.innerText = isCorrect ? "DIRECT HIT!" : "MISS!";
+            fb.className = `absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 ${isCorrect ? 'border-green-500 text-green-400' : 'border-red-500 text-red-400'} p-4 rounded-xl text-center z-40 opacity-100 font-black text-2xl`;
+            
+            setTimeout(() => {
+                fb.style.opacity = 0;
+                if(isCorrect) { 
+                    bS.classList.add('animate-shake'); 
+                    state.enemyHP -= 50; 
+                    showDamage('enemy-damage', 50);
+                } else { 
+                    state.playerHP -= 25; 
+                    showDamage('player-damage', 25);
+                }
+                updateHP();
+                setTimeout(() => {
+                    bS.classList.remove('animate-shake');
+                    if (state.enemyHP <= 0 || state.playerHP <= 0) {
+                        finishBattle(state.enemyHP <= 0);
+                        state.isAnimating = false;
+                    } else if (isCorrect) {
+                        showDetailedFeedback("Nice work — here's a visual and the reasoning behind the correct answer.");
+                    } else {
+                        loadQuestion();
+                        state.isAnimating = false;
+                    }
+                }, 400);
+            }, 1000);
+        }
+
+        function finishBattle(win) {
+            if(win && state.currentLevel === state.unlockedLevels) { 
+                state.unlockedLevels++; 
+                if (state.playerName) saveLocalProfile(state.playerName);
+                syncCurrentProfileToCloud();
+            }
+            document.getElementById('result-overlay').classList.remove('hidden');
+            safeSet('result-title', win ? 'VICTORY' : 'DEFEATED');
+            safeSet('result-desc', win ? 'The creature has been banished.' : 'Retreat to the academy to study.');
+        }
+
+        window.returnToMenu = () => {
+            document.getElementById('result-overlay').classList.add('hidden');
+            document.getElementById('battle-screen').classList.add('hidden');
+            document.getElementById('level-screen').classList.remove('hidden');
+            state.isAnimating = false;
+            renderLevelMenu();
+            syncCurrentProfileToCloud();
+        };
+        window.closeDetailedFeedback = () => {
+            const plotEl = document.getElementById("plot-container");
+            if (plotEl) {
+                if (typeof Plotly !== "undefined") Plotly.purge(plotEl);
+                plotEl.classList.add("hidden");
+            }
+            document.getElementById("detailed-feedback-overlay").classList.add("hidden");
+            loadQuestion();
+            state.isAnimating = false;
+            syncCurrentProfileToCloud();
+        };
+
+        document.getElementById("cloud-sync-badge")?.addEventListener("click", () => requestUserSync());
+
+        runRegressions();
+        initFirebase();
+    </script>
+</body>
+</html>
