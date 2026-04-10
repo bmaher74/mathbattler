@@ -36,6 +36,11 @@ import { finalizePracticeMcq } from "./ai/finalizePracticeMcq.js";
 import { finalizeJudgeResult } from "./ai/finalizeJudgeResult.js";
 import { sanitizeLlmProseString } from "./ai/llmProseSanitize.js";
 import { LLM_NO_MARKDOWN_IN_STRINGS, PROMPT_VERSION } from "./ai/prompts/contract.js";
+import {
+    MATH_BATTLE_CONTEXT_SEEDS,
+    MATH_BATTLE_DM_DELIVERY_NUDGES,
+    pickSeededIndex
+} from "./ai/prompts/mathBattleSeeds.js";
 import { parsePlotlySpec, responseNeedsNonEmptyPlotlyChart, synthesizeQuantityStoryPlotlySpec } from "./ai/plotlyQuestionHeuristics.js";
 
  // --- ACTIVE INVARIANTS (THE BLACK BOX) ---
@@ -302,6 +307,76 @@ function safeProfileDocId(displayName) {
     }
     return Object.keys(out).length ? out : { "Algebra": { attempts: 0, corrects: 0 } };
 }
+ /** Strands used for topic interleaving (must stay in sync with question prompts). */
+const CANONICAL_SKILL_TOPICS = [
+    "Algebra",
+    "Arithmetic",
+    "Geometry",
+    "Fractions & Percent",
+    "Patterns & Sequences",
+    "Data & Probability",
+    "Real-Life Modeling"
+];
+/** Until each strand has this many attempts, prefer it for "retention" picks (exploration). */
+const SKILL_TOPIC_MIN_SAMPLES = 3;
+ function ensureCanonicalSkillTopicsInPlace(skillProfile) {
+    if (!skillProfile || typeof skillProfile !== "object") return;
+    for (const t of CANONICAL_SKILL_TOPICS) {
+        if (!skillProfile[t]) skillProfile[t] = { attempts: 0, corrects: 0 };
+    }
+}
+ /** Map model / legacy labels onto CANONICAL_SKILL_TOPICS for stable stats. */
+function canonicalizeReportedTopic(raw) {
+    const s = String(raw ?? "").trim();
+    const sl = s.toLowerCase().replace(/\s+/g, " ");
+    if (!sl || sl === "math") return "Arithmetic";
+    for (const c of CANONICAL_SKILL_TOPICS) {
+        if (sl === c.toLowerCase()) return c;
+    }
+    if (sl.includes("algebra") || /\bequation\b/.test(sl)) return "Algebra";
+    if (sl.includes("geometry") || sl.includes("shape") || sl.includes("perimeter") || sl.includes("area")) return "Geometry";
+    if (sl.includes("fraction") || sl.includes("percent") || sl.includes("ratio") || sl.includes("decimal")) {
+        return "Fractions & Percent";
+    }
+    if (sl.includes("pattern") || sl.includes("sequence") || sl.includes("nth term")) return "Patterns & Sequences";
+    if (sl.includes("data") || sl.includes("probability") || sl.includes("graph") || sl.includes("mean") || sl.includes("median")) {
+        return "Data & Probability";
+    }
+    if (sl.includes("model") || sl.includes("real-life") || sl.includes("real life")) return "Real-Life Modeling";
+    if (sl.includes("arithmetic") || sl.includes("order of operations") || sl.includes("integer")) return "Arithmetic";
+    return s.length > 40 ? s.slice(0, 40) : s;
+}
+ /**
+ * Retention focus: under-sampled strands first (so one topic cannot monopolize), else lowest success ratio.
+ */
+function pickRetentionTopic(skillProfile) {
+    const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
+    ensureCanonicalSkillTopicsInPlace(sp);
+    const under = CANONICAL_SKILL_TOPICS.filter((t) => (sp[t]?.attempts || 0) < SKILL_TOPIC_MIN_SAMPLES);
+    if (under.length) return under[Math.floor(Math.random() * under.length)];
+    let best = CANONICAL_SKILL_TOPICS[0];
+    let bestRatio = 2;
+    for (const t of CANONICAL_SKILL_TOPICS) {
+        const d = sp[t];
+        if (!d || d.attempts < 1) continue;
+        const r = d.corrects / d.attempts;
+        if (r < bestRatio - 1e-9) {
+            bestRatio = r;
+            best = t;
+        }
+    }
+    return best;
+}
+ function recordCombatSkillOutcome(question, judged) {
+    if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
+    ensureCanonicalSkillTopicsInPlace(state.skillProfile);
+    const topic = canonicalizeReportedTopic(question?.topic_category);
+    if (!state.skillProfile[topic]) state.skillProfile[topic] = { attempts: 0, corrects: 0 };
+    state.skillProfile[topic].attempts += 1;
+    const good = judged?.band === "correct_with_reasoning" || judged?.band === "correct_no_reasoning";
+    if (good) state.skillProfile[topic].corrects += 1;
+    if (state.playerName) saveLocalProfile(state.playerName);
+}
  /**
  * Combine Firestore + localStorage so neither source can wipe the other.
  * unlockedLevels = max(1, cloud, local); skills = per-topic max of stats.
@@ -471,12 +546,13 @@ async function reconcileProfileWithCloud() {
     const merged = mergeProfileRecords(m1, session);
     state.unlockedLevels = merged.unlockedLevels;
     state.skillProfile = merged.skillProfile;
+    ensureCanonicalSkillTopicsInPlace(state.skillProfile);
     state.shards = merged.shards ?? 0;
     state.cosmeticsTier = merged.cosmeticsTier ?? 0;
     state.bestiary = Array.isArray(merged.bestiary) ? merged.bestiary : [];
     state.bossCacheByLevel = merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : state.bossCacheByLevel;
     saveLocalProfile(name);
-    await persistMergedProfileToCloud(name, merged);
+    await persistMergedProfileToCloud(name, { ...merged, skillProfile: state.skillProfile });
     const ls = document.getElementById("level-screen");
     if (ls && !ls.classList.contains("hidden")) {
         renderLevelMenu();
@@ -655,13 +731,14 @@ async function initFirebase() {
      const merged = mergeProfileRecords(cloudSnapshot, localSnapshot);
     state.unlockedLevels = merged.unlockedLevels;
     state.skillProfile = merged.skillProfile;
+    ensureCanonicalSkillTopicsInPlace(state.skillProfile);
     state.shards = merged.shards ?? 0;
     state.cosmeticsTier = merged.cosmeticsTier ?? 0;
     state.bestiary = Array.isArray(merged.bestiary) ? merged.bestiary : [];
     state.bossCacheByLevel = merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : state.bossCacheByLevel;
     saveLocalProfile(name);
      if (isFirebaseReady && db) {
-        await persistMergedProfileToCloud(name, merged);
+        await persistMergedProfileToCloud(name, { ...merged, skillProfile: state.skillProfile });
     } else {
         state.lastCloudSyncAt = Date.now();
         state.cloudSyncError = null;
@@ -1342,55 +1419,66 @@ const FALLBACK_QUESTIONS = [
         `- Make distractors realistic: common student mistakes for this band (sign error, order of operations, wrong percent base, etc.).\n`
     );
 }
+ /** Compact per-topic stats for the question LLM (retention / progression tuning). */
+function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
+    const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
+    ensureCanonicalSkillTopicsInPlace(sp);
+    const rows = Object.entries(sp).map(([topic, v]) => {
+        const a = typeof v?.attempts === "number" ? v.attempts : 0;
+        const c = typeof v?.corrects === "number" ? v.corrects : 0;
+        const ratio = a > 0 ? c / a : -1;
+        const pct = a > 0 ? Math.round((100 * c) / a) : null;
+        return { topic, a, c, ratio, pct };
+    });
+    rows.sort((x, y) => {
+        if (x.ratio < 0 && y.ratio >= 0) return 1;
+        if (y.ratio < 0 && x.ratio >= 0) return -1;
+        if (x.ratio < 0 && y.ratio < 0) return x.topic.localeCompare(y.topic);
+        return x.ratio - y.ratio;
+    });
+    const slice = rows.slice(0, maxTopics);
+    if (!slice.length) return "(no skill profile yet — default to Topic below)";
+    return slice.map((r) => `${r.topic}: ${r.c}/${r.a} correct${r.pct != null ? ` (${r.pct}%)` : ""}`).join("; ");
+}
  function buildMathQuestionPrompt() {
     const easier = state.forceEasierNextQuestion === true;
     const diff = easier ? "Introductory" : (state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8"));
+    const difficultyFromLevel =
+        state.currentLevel <= 3 ? "Introductory (map levels 1–3)" : state.currentLevel <= 6 ? "Grade 7 (map levels 4–6)" : "Grade 8 (map level 7+)";
+    const difficultyCalculationLine = easier
+        ? `Difficulty label is Introductory because the player is on a remedial/easier question this round (potion or struggle path) — use Foundations-style tasks even if map level is ${state.currentLevel}.`
+        : `Difficulty label follows map level: level ${state.currentLevel} → ${difficultyFromLevel.split("(")[0].trim()}.`;
     const criterionCycle = ["A", "B", "C"];
     const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
     const enemyName = String(getQuestNode(state.currentLevel)?.name || "Enemy");
-    const contextSeeds = [
-        "sports practice (scores, laps, training plan)",
-        "shopping/budget (discounts, tax, unit price)",
-        "school timetable (minutes, periods, totals)",
-        "science lab (measurement, rates, density-style ratios)",
-        "music (beats per minute, patterns, repeats)",
-        "video games (XP, levels, upgrades, probability drops)",
-        "travel (distance-time-speed with simple numbers)",
-        "geometry in a room (perimeter/area, tiles, fencing)",
-        "data display (table/bar chart/line chart interpretation)",
-        "patterns & sequences (nth term, rule, justification)"
-    ];
-    const pickSeed = (nonce) => {
-        const s = String(nonce || "");
-        let h = 0;
-        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-        return contextSeeds[h % contextSeeds.length];
-    };
-    let weakestTopic = "Algebra";
-    if (state.skillProfile) {
-        let lowestRatio = 1.1;
-        Object.entries(state.skillProfile).forEach(([topic, data]) => {
-            const ratio = data.attempts === 0 ? 0 : data.corrects / data.attempts;
-            if (ratio < lowestRatio) {
-                lowestRatio = ratio;
-                weakestTopic = topic;
-            }
-        });
+    if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
+    ensureCanonicalSkillTopicsInPlace(state.skillProfile);
+    const retentionTopic = pickRetentionTopic(state.skillProfile);
+    // ~70% breadth: random strand among the six that are not the retention anchor; ~30% reinforce the retention strand.
+    const progressionPool = CANONICAL_SKILL_TOPICS.filter((t) => t !== retentionTopic);
+    let chosenTopic;
+    let topicPedagogyMode;
+    let topicPedagogyExplanation;
+    if (progressionPool.length && Math.random() < 0.7) {
+        chosenTopic = progressionPool[Math.floor(Math.random() * progressionPool.length)];
+        topicPedagogyMode = "progression";
+        topicPedagogyExplanation = `BREADTH (~70%): topic is a random strand from the other six MYP strands (not the current retention anchor “${retentionTopic}”), so most fights spread across the curriculum.`;
+    } else {
+        chosenTopic = retentionTopic;
+        topicPedagogyMode = "retention";
+        topicPedagogyExplanation = `RETENTION (~30%): reinforce the profile focus strand “${retentionTopic}” (under-sampled strands first until ${SKILL_TOPIC_MIN_SAMPLES} attempts each, then lowest success rate among strands).`;
     }
-    // 70/30 interleaving: 70% weakest-topic retention, 30% alternative topic progression.
-    let chosenTopic = weakestTopic;
-    try {
-        const topics = state.skillProfile ? Object.keys(state.skillProfile) : [];
-        const others = topics.filter((t) => t && t !== weakestTopic);
-        if (others.length && Math.random() < 0.3) {
-            chosenTopic = others[Math.floor(Math.random() * others.length)];
-        }
-    } catch (_) {}
+    const skillSnapshot = formatSkillSnapshotForPrompt(state.skillProfile);
     const nonce =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-    const contextSeed = pickSeed(nonce);
+    const contextSeed =
+        MATH_BATTLE_CONTEXT_SEEDS[pickSeededIndex(nonce, "ctx", MATH_BATTLE_CONTEXT_SEEDS.length)];
+    const dmDeliveryNudge =
+        MATH_BATTLE_DM_DELIVERY_NUDGES[
+            pickSeededIndex(nonce, "dm", MATH_BATTLE_DM_DELIVERY_NUDGES.length)
+        ];
     let avoidPrior = "";
     const prevStem = state.activeQuestion?.text;
     if (prevStem && String(prevStem).trim()) {
@@ -1402,31 +1490,43 @@ const FALLBACK_QUESTIONS = [
 Role: You are an expert IB Middle Years Programme (MYP) Math Examiner acting as a slightly snarky Dungeon Master for a middle school RPG.
 
 Current Combat Parameters:
-- Difficulty: ${diff}
-- Topic: ${chosenTopic}
 - Enemy Name: ${enemyName}
+- Map level (progression gate): ${state.currentLevel}
+- MYP criterion focus: ${targetCriterion} (A: knowing & procedures; B: patterns, rules, generalization; C: communicating & interpreting representations)
 
-Task: Generate 1 unique, rigorous MYP-aligned math question based on the topic and difficulty.
+Difficulty (computed for this player — obey the label AND the curriculum band in the constraints block):
+- Display difficulty: ${diff}
+- How it is calculated: ${difficultyCalculationLine}
+- The separate CURRICULUM CONSTRAINTS block below uses the same effective band as the game (Foundations if easier flag, else map level).
 
-Tone & Narrative (CRITICAL):
-- The question "text" MUST be formatted in two parts:
-  1) The Taunt: a short, slightly arrogant, math-themed insult/challenge spoken by the enemy (appeal to ages 11–13).
-  2) The Equation/Problem: the actual math question immediately after, stated clearly. Do NOT hide the math in a confusing word problem unless the topic is Real-Life Modeling.
+Retention vs progression (topic choice — mirrors the player profile algorithm):
+- ${topicPedagogyExplanation}
+- Mode this round: ${topicPedagogyMode.toUpperCase()}
+- Retention anchor strand (used ~30% of battles; ~70% use a different strand for breadth): ${retentionTopic}
+- Topic for THIS question (must align the math): ${chosenTopic}
+- Per-topic snapshot (corrects/attempts; use to calibrate within the band — scaffold if mastery looks low on ${chosenTopic}, stretch slightly if strong, never leave MYP scope): ${skillSnapshot}
 
-Technical & Formatting Constraints:
-- All math notation MUST use LaTeX (e.g., $x^2 + 5 = 14$).
-- IMPORTANT: When using units like cm, m, or percent, ALWAYS wrap them in \\text{} (e.g. $25 \\text{ cm}^3$). In JSON string values every LaTeX backslash must be doubled (JSON turns a single \\t into a tab and breaks \\text into "ext"): write \\\\text{...}, \\\\times, \\\\frac so the parsed string contains \\text, \\times, \\frac.
-- Combat questions MUST be open-ended typed response: type MUST be "input" and there MUST NOT be MCQ options in the combat schema.
-- Return JSON ONLY (no markdown, no code fences).
+Pedagogical instruction: Maximize long-term progression (unlock-ready skills, breadth) while protecting retention (do not make the weakest areas feel impossible). For this round, honor Topic=${chosenTopic} at Difficulty=${diff}. If the snapshot shows ${chosenTopic} with very low success, favor clarity, one main move, and a fair check; if healthy, you may add one extra layer still appropriate to ${diff}.
+
+Task: Generate exactly one rigorous, MYP-aligned math question for this battle.
+
+Balanced goal: The game needs predictable machine output (valid JSON, exact keys, safe strings) so the UI and grader work. The student needs fresh, exciting story and voice so practice stays engaging. Do both: never break JSON or field rules for the sake of flavor; never default to a bland, interchangeable stem when you can invent something original that still fits Topic, Difficulty, and the band below.
+
+LAYER 1 — Predictable for the application (follow exactly; do not improvise structure here):
+- Output one JSON object only, no markdown or code fences around it. Keys must match the hard-requirements suffix exactly. type must be "input". criterion must be "${targetCriterion}" (same as MYP criterion focus above). No MCQ options.
+- Math notation: LaTeX inside inline $...$ only (never $$...$$). For units (cm, m, %, etc.) use \\\\text{...} inside math; in JSON strings double every backslash in TeX (\\\\text, \\\\times, \\\\frac) so parsing does not turn \\\\t into a tab.
+- plotly_spec discipline: if it is "", never claim there is a graph/chart/visual in text or ideal_explanation. If you use a quantity story (bags, apples, gave away, how many left, in all, etc.), plotly_spec must be non-empty with numeric Plotly data (see strict block below).
 ${avoidPrior}
 ${buildMypConstraintsBlock(state.forceEasierNextQuestion === true ? 1 : state.currentLevel)}
 
-CREATIVITY & VARIATION (must follow):
-- Use this scenario seed to keep things fresh: ${contextSeed}.
-- Do NOT reuse the same story template repeatedly. Avoid the cliché “bag of marbles / gave away / found more / now has” structure unless the prompt explicitly demands it.
-- Vary the surface form: sometimes ask to simplify, solve, determine, represent with an equation, interpret a small table/graph, or justify a pattern (especially for Criterion B).
-- Vary names, objects, and settings. Prefer realistic MYP contexts (school, sports, shopping, science, games) over marbles unless needed.
-- For Criterion B, prioritize patterns/sequences/generalization and justification (not just a word-problem equation solve).
+LAYER 2 — Novel for the student (use your full training freely; stay inside MYP scope above):
+- Invent an original scenario: names, setting, stakes, and humor. Draw from any age-appropriate context that fits the Topic—not only fantasy, not only the seed lines.
+- Optional sparks (mood board only; not a script—the app does not read these as data). If you have a fresher idea, use it instead:
+  - Setting / mood spark: ${contextSeed}
+  - Taunt delivery spark: ${dmDeliveryNudge}
+- The "text" field MUST contain two clear parts in order: (1) The Taunt — short, slightly arrogant or dramatic, math-themed challenge from ${enemyName} or the scene (ages 11–13). (2) The Task — the actual math question, plainly stated so a student knows what to answer. Do not bury the math in confusion unless the topic is genuinely Real-Life Modeling and the task is still unambiguous.
+- Taunt + task should read as one mini-quest, not two pasted paragraphs. Prefer specific invented details over generic filler (e.g. tired “Monday morning bus” tropes unless travel/timetable math truly fits).
+- Vary mathematical surface form when it suits the criterion: simplify, solve, determine, model with an equation, interpret a tiny table or description, justify a pattern (especially for B). Avoid repeating the same story skeleton every time; skip marble-bag clichés unless appropriate—and then include the required chart.
 
 For ideal_explanation: write as if explaining to a smart 10-year-old — short sentences, everyday words, friendly tone, optional one simple analogy; still be mathematically correct and use LaTeX for formulas inside $...$ only (no Markdown, no pipe tables, no **). Do not sound like a dry textbook abstract.
 
@@ -1592,6 +1692,7 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
         role: "system",
         content:
             "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. " +
+            "Treat output as two layers: (1) rigid JSON shape, keys, LaTeX-in-JSON escaping, and plotly_spec rules — must be perfect for the app; (2) story, taunt, and scenario — be original and engaging within MYP constraints. Never sacrifice (1) for (2). " +
             "The battle UI does not render Markdown: never put pipe tables, # headings, **, backticks, or HTML in text fields — plain sentences; tabular data as labeled lines (e.g. Day 1: 5 laps). Math only as $...$, never $$...$$. " +
             LLM_NO_MARKDOWN_IN_STRINGS +
             " For word problems with objects (marbles, apples, bags) or addition/subtraction stories, always include a non-empty plotly_spec with numeric Plotly data (number line or bars) — never leave plotly_spec empty for those."
@@ -2377,6 +2478,7 @@ window.nextPracticeQuestion = async () => {
             return;
         }
         const judged = await gradeResponseViaDashScope({ question: q, studentResponse });
+        recordCombatSkillOutcome(q, judged);
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
         const comboMult = state.comboActive ? 1.5 : 1.0;
@@ -2432,6 +2534,7 @@ window.nextPracticeQuestion = async () => {
     } catch (err) {
         console.error("grading failed:", err);
         const judged = localFallbackJudge({ question: q, studentResponse });
+        recordCombatSkillOutcome(q, judged);
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
         const comboMult = state.comboActive ? 1.5 : 1.0;
