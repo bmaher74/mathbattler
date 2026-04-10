@@ -1,6 +1,6 @@
 # Math Battler — Requirements Implementation Checklist
 
-This file maps `Game_Requirements.md` requirements to the current implementation (primarily `index.html`) and tracks remaining gaps.
+This file maps requirements in [`Game_Requirements.md`](./Game_Requirements.md) to the current implementation (primarily [`index.html`](../index.html)) and tracks remaining gaps.
 
 ## Legend
 - **Implemented**: present in codebase now
@@ -26,7 +26,7 @@ This file maps `Game_Requirements.md` requirements to the current implementation
 ## 4) High-fidelity graphics & presentation
 - **Implemented**: All sprites are inline SVG strings (`ASSETS`, `BOSS_ASSETS`)
 - **Implemented**: Key regression anchors for wizard/slime/golem exist and are tested (`runRegressions`)
-- **Partial**: Boss sprites after L2 are still relatively simple placeholders; do not match Character Design Prompts fidelity
+- **Partial**: Boss sprites after L2 are still relatively simple placeholders; do not match [Character Design Prompts](./Character Design Prompts.md) fidelity
 - **Partial**: Level 10 boss is “Calculus Titan” (out-of-scope topic per curriculum constraints). Must replace with MYP-scope final boss concept.
 - **Implemented**: MathJax loaded; question + explanation typeset; units guidance exists in prompts
 
@@ -45,7 +45,7 @@ This file maps `Game_Requirements.md` requirements to the current implementation
 
 ## 7) AI prompt engineering
 - **Partial**: Uses DashScope (Qwen) for live questions and judging, with JSON-only constraints and response_format json_object
-- **Missing**: Combat generator prompt should be defined explicitly from `Question Prompt Template.md` (with Apr 2026 combat update: input-only)
+- **Missing**: Combat generator prompt should be defined explicitly from [`Question Prompt Template.md`](./Question Prompt Template.md) (with Apr 2026 combat update: input-only)
 - **Partial**: Judge prompt exists but needs rubric-aligned detail, criterion-aware scoring, and `isCrit`
 
 ## 8) Regression suite (self-healing anchors)
@@ -71,5 +71,5 @@ This file maps `Game_Requirements.md` requirements to the current implementation
 
 ## Post-level-10 content
 - **Partial**: Map can render beyond 10 nodes visually (`total = max(10, unlockedLevels + 1)`), but boss identities repeat via modulo and are not generated
-- **Missing**: Infinite procedural levels >10 with LLM-generated bosses (battle + map) using `Dynamic Character Prompt.md`, cached locally and in Firestore
+- **Missing**: Infinite procedural levels >10 with LLM-generated bosses (battle + map) using [`Dynamic Character Prompt.md`](./Dynamic Character Prompt.md), cached locally and in Firestore
 
