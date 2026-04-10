@@ -10,3 +10,6 @@ window.__firebase_config = JSON.stringify({
     messagingSenderId: "PASTE",
     appId: "PASTE_WEB_APP_ID"
 });
+
+// If `/runtime-config.js` (served by `npm run serve`) already set a real config, keep it.
+// This file provides safe placeholders only.
