@@ -39,8 +39,8 @@ export function buildJudgePrompt({ question, studentResponse, difficultyLabel })
         `Multiple valid approaches count—clear arithmetic with units, timelines in words, or informal step lists can show solid work. ` +
         `Do NOT require formal lettered formulas (e.g. $d=60t$, $d=rt$) unless the question explicitly asks for an equation or named variables. ` +
         `If the student is correct but informal, still use score and band that reflect criterion ${criterion}; use next_steps to suggest optional formal polish without implying failure.\n\n` +
-        `Math in your JSON strings (feedback, strengths, next_steps): MathJax INLINE TeX in single dollar signs ONLY, e.g. $t$, $2.5$, $d=60t$, $60\\times 2.5=150$. ` +
-        `Never use $$...$$. No Markdown (no **, backticks, pipe tables, # headings, or bare LaTeX without delimiters). Every $ must be paired ($...$).\n\n` +
+        `Math in your JSON strings (feedback, strengths, next_steps): MathJax INLINE TeX inside \\(...\\) ONLY, e.g. \\(t\\), \\(2.5\\), \\(d=60t\\), \\(60\\times 2.5=150\\). ` +
+        `Never use $$...$$. No Markdown (no **, backticks, pipe tables, # headings, or bare LaTeX without delimiters). Do not use single-dollar $...$ for math (currency may use bare $).\n\n` +
         `${LLM_NO_MARKDOWN_IN_STRINGS}\n\n` +
         `Output one JSON object only, with keys:\n` +
         `- band: "incorrect" | "partial" | "correct_no_reasoning" | "correct_with_reasoning"\n` +
@@ -61,6 +61,9 @@ export function buildJudgePrompt({ question, studentResponse, difficultyLabel })
         `Notation: Answers are plain keyboard text. Never penalize band or score for using x, *, "times", or parentheses for multiplication; never tell them to use × instead of x.\n` +
         `Typos: A clear misspelling (e.g. "mulitply") may lower score by at most 1 point; do not change band on a minor typo alone if math and reasoning are sound. You may note it briefly in next_steps.\n\n` +
         `Ignore filler; judge whether the mathematics fits the task and the explanation supports the criterion.\n` +
-        `The feedback string must stay plain prose with "-" bullet lines only — no tables or markdown.\n`
+        `The feedback string must stay plain prose with "-" bullet lines only — no tables or markdown.\n\n` +
+        `If the final band is incorrect or partial, include at least one concrete strategy the student can try next ` +
+        `(for example re-read the question, check order of operations, estimate to see if the size makes sense, or line up steps) ` +
+        `in feedback or next_steps — supportive tone, no shame.\n`
     );
 }

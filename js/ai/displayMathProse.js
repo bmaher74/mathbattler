@@ -1,5 +1,5 @@
 /**
- * Safe HTML for prose that may contain MathJax inline delimiters $...$.
+ * Safe HTML for prose that may contain MathJax inline delimiters \\(...\\) (and stray $...$ toggles for legacy text).
  */
 
 import { sanitizeLlmProseString } from "./llmProseSanitize.js";
@@ -11,12 +11,14 @@ export function escapeHtmlText(s) {
         .replace(/>/g, "&gt;");
 }
 
-/** Newlines to <br> only outside $...$ (input must already be HTML-escaped). */
+/** Newlines to <br> only outside inline math (\\(...\\) or legacy $...$); input must already be HTML-escaped. */
 export function nl2brRespectingInlineMath(escaped) {
     const s = String(escaped);
     let out = "";
     let i = 0;
     let inMath = false;
+    /** "paren" | "dollar" when inMath — $ inside \\(...\\) stays literal */
+    let mathMode = null;
     let buf = "";
     const flush = () => {
         if (!buf) return;
@@ -29,11 +31,33 @@ export function nl2brRespectingInlineMath(escaped) {
             i += 2;
             continue;
         }
+        if (!inMath && s[i] === "\\" && s[i + 1] === "(") {
+            flush();
+            out += "\\(";
+            i += 2;
+            inMath = true;
+            mathMode = "paren";
+            continue;
+        }
+        if (inMath && mathMode === "paren" && s[i] === "\\" && s[i + 1] === ")") {
+            flush();
+            out += "\\)";
+            i += 2;
+            inMath = false;
+            mathMode = null;
+            continue;
+        }
         if (s[i] === "$") {
+            if (inMath && mathMode === "paren") {
+                buf += "$";
+                i++;
+                continue;
+            }
             flush();
             inMath = !inMath;
             out += "$";
             i++;
+            mathMode = inMath ? "dollar" : null;
             continue;
         }
         buf += s[i++];

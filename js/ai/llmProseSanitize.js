@@ -1,5 +1,5 @@
 /**
- * Strip markdown-ish noise from model prose; keep $...$ for MathJax.
+ * Strip markdown-ish noise from model prose. Models must emit inline math as \\(...\\) only; unpaired $ stays literal (currency).
  * Runs after JSON.parse (includes fixJsonEscapeCorruptedLatexCommands).
  */
 
@@ -111,30 +111,69 @@ function stripMarkdownEmphasisMarkers(s) {
 function collapseDisplayMathToInline(s) {
     return String(s).replace(/\$\$([\s\S]*?)\$\$/g, (_, inner) => {
         const oneLine = String(inner).trim().replace(/\s+/g, " ");
-        return "$" + oneLine + "$";
+        return "\\(" + oneLine + "\\)";
     });
 }
 
-function fixUnpairedMathDelimiters(s) {
-    const t = String(s);
+/**
+ * Heuristic: models sometimes wrap a whole word problem in $...$. MathJax then treats it as math and
+ * swallows spaces (every letter looks italic). Real inline math is usually short or TeX-heavy.
+ */
+function shouldDemoteMathAsProse(inner) {
+    const t = String(inner).trim();
+    if (!t) return false;
+    if (/^\\(text|mathrm|mbox)\{/.test(t) && t.length < 520) return false;
+    if (t.length >= 72) return true;
+    if (/\.\s+[A-Za-z]/.test(t)) return true;
+    const proseHit =
+        /\b(the|and|but|for|you|your|they|what|when|here|there|school|fund|sell|twist|more|than|each|every|has|have|was|were|this|that|with|from|into|about|cookie|marble|apple|bag|gave|left|started)\b/i.test(
+            t
+        );
+    if (t.length >= 28 && proseHit) return true;
+    const wordish = t.split(/\s+/).filter((w) => /[a-zA-Z]{3,}/.test(w)).length;
+    if (t.length >= 22 && wordish >= 4) return true;
+    return false;
+}
+
+/**
+ * Strip $ delimiters from spans that are almost certainly English prose, so MathJax leaves them as text.
+ */
+export function demoteAccidentalInlineMathWrapping(s) {
+    const str = String(s);
     let out = "";
     let i = 0;
-    let inMath = false;
-    while (i < t.length) {
-        if (t[i] === "\\" && t[i + 1] === "$") {
+    while (i < str.length) {
+        if (str[i] === "\\" && str[i + 1] === "$") {
             out += "\\$";
             i += 2;
             continue;
         }
-        if (t[i] === "$") {
-            inMath = !inMath;
-            out += "$";
-            i++;
+        if (str[i] !== "$") {
+            out += str[i++];
             continue;
         }
-        out += t[i++];
+        i++;
+        let inner = "";
+        while (i < str.length) {
+            if (str[i] === "\\" && str[i + 1] === "$") {
+                inner += "\\$";
+                i += 2;
+                continue;
+            }
+            if (str[i] === "$") break;
+            inner += str[i++];
+        }
+        if (i < str.length && str[i] === "$") {
+            if (shouldDemoteMathAsProse(inner)) {
+                out += inner.replace(/\\\$/g, "$");
+            } else {
+                out += "$" + inner + "$";
+            }
+            i++;
+        } else {
+            out += "$" + inner;
+        }
     }
-    if (inMath) out += "$";
     return out;
 }
 
@@ -146,6 +185,6 @@ export function sanitizeLlmProseString(s) {
     t = flattenMarkdownTablesToPlainText(t);
     t = stripMarkdownEmphasisMarkers(t);
     t = collapseDisplayMathToInline(t);
-    t = fixUnpairedMathDelimiters(t);
+    t = demoteAccidentalInlineMathWrapping(t);
     return t;
 }

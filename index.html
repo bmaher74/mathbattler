@@ -45,7 +45,7 @@
     <link rel="stylesheet" href="tailwind.css" />
     <link rel="stylesheet" href="./style.css">
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-    <script>window.MathJax = { tex: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] } };</script>
+    <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']] } };</script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script type="importmap">
     {
@@ -91,6 +91,8 @@
         </span>
     </button>
 
+    <div id="engagement-toast" class="hidden opacity-0 fixed top-14 left-1/2 -translate-x-1/2 z-[280] max-w-[min(92vw,24rem)] rounded-xl border border-emerald-600/70 bg-emerald-950/95 px-4 py-2.5 text-center text-xs sm:text-sm font-bold text-emerald-100 shadow-xl pointer-events-none transition-opacity duration-300" role="status"></div>
+
     <div id="ai-questions-status" class="fixed right-2 sm:right-3 top-12 sm:top-14 z-[119] max-w-[min(100vw-1rem,15rem)] rounded-lg border border-slate-600/90 bg-slate-900/95 px-2.5 py-1.5 shadow-lg backdrop-blur-sm" title="" aria-live="polite">
         <span class="flex flex-col leading-tight min-w-0">
             <span class="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide text-slate-500">Questions</span>
@@ -99,19 +101,20 @@
     </div>
 
     <div id="level-screen" class="hidden absolute inset-0 z-50 flex flex-col bg-slate-950 pt-14 sm:pt-16 min-h-0">
-        <div class="shrink-0 flex justify-between items-center gap-3 px-4 sm:px-6 w-full max-w-4xl mx-auto pb-3">
-            <div class="bg-slate-900/90 border-2 border-indigo-500/80 px-3 sm:px-4 py-2 rounded-full font-bold text-sm sm:text-base shadow-lg shadow-indigo-900/40">
-                <span class="text-slate-400">Hero:</span> <span id="welcome-player-text" class="text-indigo-300"></span>
+        <div class="shrink-0 relative z-30 flex flex-wrap justify-between items-center gap-3 px-4 sm:px-6 w-full max-w-4xl mx-auto pb-3 pointer-events-auto bg-slate-950/95">
+            <div class="bg-slate-900/90 border-2 border-indigo-500/80 px-3 sm:px-4 py-2 rounded-2xl font-bold text-sm sm:text-base shadow-lg shadow-indigo-900/40 min-w-0 max-w-full flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                <span class="shrink-0"><span class="text-slate-400">Hero:</span> <span id="welcome-player-text" class="text-indigo-300"></span></span>
+                <span id="player-flair-badges" class="player-flair-badges min-w-0" aria-label="Earned titles"></span>
             </div>
-            <div class="flex items-center gap-2">
-                <div class="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-700/60 bg-amber-950/40 text-amber-200 text-xs font-black uppercase">
-                    <span>Shards</span>
-                    <span id="shards-count" class="text-amber-100"></span>
+            <div class="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                <div class="map-shards-pill flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-amber-700/60 bg-amber-950/40 text-amber-200 text-[10px] sm:text-xs font-black uppercase shrink-0" title="Logic Shards">
+                    <span class="whitespace-nowrap">Shards</span>
+                    <span id="shards-count" class="text-amber-100 tabular-nums"></span>
                 </div>
-                <button type="button" onclick="openBestiary()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Bestiary</button>
-                <button type="button" onclick="openUpgrades()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Upgrades</button>
-                <button type="button" onclick="openPracticeMode()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Practice (MCQ)</button>
-                <button onclick="location.reload()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Logout</button>
+                <button type="button" id="map-btn-bestiary" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Bestiary</button>
+                <button type="button" id="map-btn-upgrades" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Upgrades</button>
+                <button type="button" id="map-btn-practice" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Practice (MCQ)</button>
+                <button type="button" id="map-btn-logout" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Logout</button>
             </div>
         </div>
         <div class="shrink-0 px-4 sm:px-6 pt-2 pb-4 text-center max-w-xl mx-auto w-full border-b border-slate-800/80 bg-slate-950/50">
@@ -119,6 +122,10 @@
             <p class="text-slate-400 text-sm sm:text-base mt-2 leading-snug px-2">Start at level 1 above. Higher levels lie further down the path.</p>
             <p id="ai-route-notice" class="hidden mt-2 mx-auto max-w-lg text-[12px] sm:text-sm text-amber-200/95 bg-amber-950/50 border border-amber-700/60 rounded-lg px-3 py-2 leading-snug" role="status"></p>
             <p id="map-question-buffer-hint" class="text-[11px] text-slate-500 mt-1 px-2" aria-live="polite"></p>
+            <div id="map-engagement-strip" class="mt-2 flex flex-col sm:flex-row flex-wrap gap-1 sm:gap-4 justify-center items-center text-[11px] sm:text-xs text-slate-400 px-2" aria-live="polite">
+                <span id="map-streak-line" class="font-bold text-sky-200/90"></span>
+                <span id="map-daily-quest-line" class="font-bold text-amber-200/80"></span>
+            </div>
         </div>
         <div class="quest-map-wrap flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar px-2 sm:px-4 pb-8 flex justify-center min-h-0">
             <div id="levels-container" class="w-full max-w-lg sm:max-w-xl py-3"></div>
@@ -239,7 +246,7 @@
             <div id="practice-mcq-grid" class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
             <div id="practice-feedback" class="mt-4 text-center text-sm font-bold text-slate-200"></div>
             <div class="mt-4 flex justify-center">
-                <button type="button" onclick="nextPracticeQuestion()" class="bg-indigo-600 hover:bg-indigo-500 px-5 py-3 rounded-xl font-black uppercase">Next</button>
+                <button type="button" id="practice-next-btn" onclick="nextPracticeQuestion()" class="bg-indigo-600 hover:bg-indigo-500 px-5 py-3 rounded-xl font-black uppercase disabled:opacity-50 disabled:pointer-events-none">Next</button>
             </div>
         </div>
     </div>

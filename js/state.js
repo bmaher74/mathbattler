@@ -31,7 +31,30 @@ export const state = {
     /** Set when live AI prefetch fails — shown on map banner */
     aiOfflineHint: null,
     /** Short technical detail for tooltips / buffer line (e.g. HTTP 429) */
-    lastPrefetchError: null
+    lastPrefetchError: null,
+    /**
+     * Retention / participation meta (persisted under `engagement` in profile JSON).
+     * Streak uses the player's local calendar (timezone).
+     */
+    engagement: {
+        streakCount: 0,
+        longestStreak: 0,
+        /** Last calendar day (YYYY-MM-DD local) used for streak gap math */
+        lastStreakAnchorDate: "",
+        /** Set to YYYY-MM-DD after daily login / streak logic runs (idempotent same day) */
+        streakLastProcessedDate: "",
+        streakFreezeRemaining: 1,
+        /** Monday date YYYY-MM-DD of week when freeze was last refilled */
+        freezeWeekMonday: "",
+        engagementDayKey: "",
+        practiceGrantsToday: 0,
+        dailyQuestBattleDone: false,
+        streakMilestonesClaimed: [],
+        earnedFlair: [],
+        lifetimePracticeGrants: 0
+    },
+    /** In-battle only: participation grants for this fight */
+    _battleParticipation: { firstCastDone: false, reflectionDone: false }
 };
 
 export function safeSet(id, val, prop = "innerText") {

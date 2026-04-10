@@ -43,6 +43,9 @@ import {
 } from "./ai/prompts/mathBattleSeeds.js";
 import { parsePlotlySpec, responseNeedsNonEmptyPlotlyChart, synthesizeQuantityStoryPlotlySpec } from "./ai/plotlyQuestionHeuristics.js";
 
+let practiceActiveQuestion = null;
+let practiceMcqFetchGeneration = 0;
+
  // --- ACTIVE INVARIANTS (THE BLACK BOX) ---
 // Assets are anchored with specific IDs for regression tests to monitor detail levels.
 /** Map layout (viewBox coords): level 1 at top, higher levels lower on the page. */
@@ -166,6 +169,21 @@ let loginGateResolved = false;
         console.groupEnd();
     } catch (_) {}
 }
+/** Full combat-question LLM I/O for DevTools (system + user + raw JSON string). */
+function logCombatQuestionLlmExchange(systemText, userText, assistantText) {
+    try {
+        const sys = String(systemText ?? "");
+        const usr = String(userText ?? "");
+        const asst = String(assistantText ?? "");
+        console.group(
+            `[MathBattler] Combat question LLM • system ${sys.length} / user ${usr.length} / assistant ${asst.length} chars`
+        );
+        console.log("%cSystem message", "font-weight:700", "\n" + sys);
+        console.log("%cUser message (full prompt)", "font-weight:700", "\n" + usr);
+        console.log("%cAssistant (raw response)", "font-weight:700", "\n" + asst);
+        console.groupEnd();
+    } catch (_) {}
+}
  function formatSyncAge(ts) {
     if (ts == null) return "";
     const s = Math.floor((Date.now() - ts) / 1000);
@@ -276,7 +294,8 @@ function safeProfileDocId(displayName) {
             shards: typeof state.shards === "number" ? Math.max(0, Math.floor(state.shards)) : 0,
             cosmeticsTier: typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0,
             bestiary: Array.isArray(state.bestiary) ? state.bestiary.slice(0, 200) : [],
-            bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {}
+            bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {},
+            engagement: engagementSnapshotFromState()
         }));
     } catch (e) { console.warn("saveLocalProfile", e); }
 }
@@ -333,17 +352,20 @@ function canonicalizeReportedTopic(raw) {
     for (const c of CANONICAL_SKILL_TOPICS) {
         if (sl === c.toLowerCase()) return c;
     }
-    if (sl.includes("algebra") || /\bequation\b/.test(sl)) return "Algebra";
-    if (sl.includes("geometry") || sl.includes("shape") || sl.includes("perimeter") || sl.includes("area")) return "Geometry";
+    if (sl.includes("pattern") || sl.includes("sequence") || sl.includes("nth term")) return "Patterns & Sequences";
     if (sl.includes("fraction") || sl.includes("percent") || sl.includes("ratio") || sl.includes("decimal")) {
         return "Fractions & Percent";
     }
-    if (sl.includes("pattern") || sl.includes("sequence") || sl.includes("nth term")) return "Patterns & Sequences";
-    if (sl.includes("data") || sl.includes("probability") || sl.includes("graph") || sl.includes("mean") || sl.includes("median")) {
+    if (sl.includes("geometry") || sl.includes("shape") || sl.includes("perimeter") || sl.includes("area")) return "Geometry";
+    if (sl.includes("data") || sl.includes("probability") || sl.includes("mean") || sl.includes("median")) {
+        return "Data & Probability";
+    }
+    if (sl.includes("graph") && (sl.includes("data") || sl.includes("bar") || sl.includes("chart") || sl.includes("plot"))) {
         return "Data & Probability";
     }
     if (sl.includes("model") || sl.includes("real-life") || sl.includes("real life")) return "Real-Life Modeling";
     if (sl.includes("arithmetic") || sl.includes("order of operations") || sl.includes("integer")) return "Arithmetic";
+    if (sl.includes("algebra") || /\bequation\b/.test(sl)) return "Algebra";
     return s.length > 40 ? s.slice(0, 40) : s;
 }
  /**
@@ -365,6 +387,11 @@ function pickRetentionTopic(skillProfile) {
             best = t;
         }
     }
+    if (bestRatio >= 2 - 1e-9) {
+        const under2 = CANONICAL_SKILL_TOPICS.filter((t) => (sp[t]?.attempts || 0) < SKILL_TOPIC_MIN_SAMPLES);
+        if (under2.length) return under2[Math.floor(Math.random() * under2.length)];
+        return CANONICAL_SKILL_TOPICS[Math.floor(Math.random() * CANONICAL_SKILL_TOPICS.length)];
+    }
     return best;
 }
  function recordCombatSkillOutcome(question, judged) {
@@ -376,6 +403,108 @@ function pickRetentionTopic(skillProfile) {
     const good = judged?.band === "correct_with_reasoning" || judged?.band === "correct_no_reasoning";
     if (good) state.skillProfile[topic].corrects += 1;
     if (state.playerName) saveLocalProfile(state.playerName);
+}
+// --- ENGAGEMENT / RETENTION (participation shards, streaks, daily quest) ---
+const EP_SHARD_LOSS_BATTLE = 5;
+const EP_SHARD_FIRST_CAST = 2;
+const EP_SHARD_PRACTICE = 1;
+const EP_PRACTICE_DAILY_CAP = 8;
+const EP_SHARD_REFLECTION = 3;
+const EP_SHARD_DAILY_QUEST_BATTLE = 5;
+const EP_SHARD_LOGIN = 2;
+const EP_STREAK_MILESTONE_SHARDS = { 3: 8, 7: 20, 14: 40 };
+
+function localDateISO() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+function parseLocalYMD(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    if (!m) return null;
+    return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+}
+function calendarDaysBetween(olderYmd, newerYmd) {
+    const a = parseLocalYMD(olderYmd);
+    const b = parseLocalYMD(newerYmd);
+    if (!a || !b) return 999;
+    return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+function mondayKeyFromYmd(ymd) {
+    const d = parseLocalYMD(ymd) || new Date();
+    const dow = d.getDay();
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - ((dow + 6) % 7));
+    const y = mon.getFullYear();
+    const mo = String(mon.getMonth() + 1).padStart(2, "0");
+    const da = String(mon.getDate()).padStart(2, "0");
+    return `${y}-${mo}-${da}`;
+}
+function normalizeEngagement(raw) {
+    const e = raw && typeof raw === "object" ? raw : {};
+    const claimed = Array.isArray(e.streakMilestonesClaimed)
+        ? e.streakMilestonesClaimed.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n))
+        : [];
+    const fromFlair = Array.isArray(e.earnedFlair)
+        ? e.earnedFlair.map((s) => String(s).trim()).filter(Boolean)
+        : [];
+    const fromTitles = Array.isArray(e.earnedTitles)
+        ? e.earnedTitles.map((s) => String(s).trim()).filter(Boolean)
+        : [];
+    const flair = [...new Set([...fromFlair, ...fromTitles])].slice(0, 24);
+    let frz = typeof e.streakFreezeRemaining === "number" ? Math.floor(e.streakFreezeRemaining) : 1;
+    frz = Math.max(0, Math.min(1, frz));
+    return {
+        streakCount: Math.max(0, Math.floor(typeof e.streakCount === "number" ? e.streakCount : 0)),
+        longestStreak: Math.max(0, Math.floor(typeof e.longestStreak === "number" ? e.longestStreak : 0)),
+        lastStreakAnchorDate: String(e.lastStreakAnchorDate || "").trim(),
+        streakLastProcessedDate: String(e.streakLastProcessedDate || "").trim(),
+        streakFreezeRemaining: frz,
+        freezeWeekMonday: String(e.freezeWeekMonday || "").trim(),
+        engagementDayKey: String(e.engagementDayKey || "").trim(),
+        practiceGrantsToday: Math.max(0, Math.floor(typeof e.practiceGrantsToday === "number" ? e.practiceGrantsToday : 0)),
+        dailyQuestBattleDone: !!e.dailyQuestBattleDone,
+        streakMilestonesClaimed: [...new Set(claimed)].sort((a, b) => a - b),
+        earnedFlair: [...new Set(flair)],
+        lifetimePracticeGrants: Math.max(0, Math.floor(typeof e.lifetimePracticeGrants === "number" ? e.lifetimePracticeGrants : 0))
+    };
+}
+function mergeEngagementRecords(cRaw, lRaw) {
+    const a = normalizeEngagement(cRaw);
+    const b = normalizeEngagement(lRaw);
+    const anchorA = a.lastStreakAnchorDate || "";
+    const anchorB = b.lastStreakAnchorDate || "";
+    const winner = anchorA > anchorB ? a : anchorB > anchorA ? b : a.streakCount >= b.streakCount ? a : b;
+    const lastAnchor = anchorA > anchorB ? anchorA : anchorB > anchorA ? anchorB : winner.lastStreakAnchorDate;
+    const dkA = a.engagementDayKey || "";
+    const dkB = b.engagementDayKey || "";
+    const sameDayKey = dkA && dkA === dkB;
+    const engagementDayKey = sameDayKey ? dkA : "";
+    let practiceGrantsToday = 0;
+    let dailyQuestBattleDone = false;
+    if (sameDayKey) {
+        practiceGrantsToday = Math.max(a.practiceGrantsToday, b.practiceGrantsToday);
+        dailyQuestBattleDone = !!(a.dailyQuestBattleDone || b.dailyQuestBattleDone);
+    }
+    const milestones = [...new Set([...a.streakMilestonesClaimed, ...b.streakMilestonesClaimed])].sort((x, y) => x - y);
+    const flair = [...new Set([...a.earnedFlair, ...b.earnedFlair])].slice(0, 24);
+    return normalizeEngagement({
+        streakCount: winner.streakCount,
+        longestStreak: Math.max(a.longestStreak, b.longestStreak),
+        lastStreakAnchorDate: lastAnchor,
+        streakLastProcessedDate:
+            a.streakLastProcessedDate > b.streakLastProcessedDate ? a.streakLastProcessedDate : b.streakLastProcessedDate,
+        streakFreezeRemaining: Math.max(a.streakFreezeRemaining, b.streakFreezeRemaining),
+        freezeWeekMonday: a.freezeWeekMonday > b.freezeWeekMonday ? a.freezeWeekMonday : b.freezeWeekMonday,
+        engagementDayKey,
+        practiceGrantsToday,
+        dailyQuestBattleDone,
+        streakMilestonesClaimed: milestones,
+        earnedFlair: flair,
+        lifetimePracticeGrants: Math.max(a.lifetimePracticeGrants, b.lifetimePracticeGrants)
+    });
 }
  /**
  * Combine Firestore + localStorage so neither source can wipe the other.
@@ -456,7 +585,227 @@ function mergeProfileRecords(cloudDoc, localDoc) {
         mergeOne(l.bossCacheByLevel);
         return out;
     })();
-    return { unlockedLevels, skillProfile, shards, cosmeticsTier, bestiary, bossCacheByLevel };
+    const engagement = mergeEngagementRecords(c.engagement, l.engagement);
+    return { unlockedLevels, skillProfile, shards, cosmeticsTier, bestiary, bossCacheByLevel, engagement };
+}
+function engagementSnapshotFromState() {
+    return normalizeEngagement(state.engagement);
+}
+function applyEngagementToState(eg) {
+    state.engagement = normalizeEngagement(eg);
+}
+function rollEngagementDayIfNeeded(todayYmd) {
+    const eg = state.engagement;
+    if (eg.engagementDayKey !== todayYmd) {
+        eg.engagementDayKey = todayYmd;
+        eg.practiceGrantsToday = 0;
+        eg.dailyQuestBattleDone = false;
+    }
+}
+function refillWeeklyStreakFreeze(todayYmd) {
+    const eg = state.engagement;
+    const mon = mondayKeyFromYmd(todayYmd);
+    if (eg.freezeWeekMonday !== mon) {
+        eg.freezeWeekMonday = mon;
+        eg.streakFreezeRemaining = 1;
+    }
+}
+function addFlairIfNew(code) {
+    const id = String(code || "").trim();
+    if (!id) return;
+    const eg = state.engagement;
+    if (!eg.earnedFlair.includes(id)) {
+        eg.earnedFlair.push(id);
+        eg.earnedFlair = [...new Set(eg.earnedFlair)].slice(0, 24);
+    }
+}
+/** Grant titles from map progress so most players see badges (not only 3+ day streaks). Idempotent. */
+const FLAIR_SVG_PATHS = {
+    star: "M12 2l2.6 6.6h6.8l-5.5 4.2 2.1 6.7L12 16.2l-6 3.3 2.1-6.7-5.5-4.2h6.8L12 2z",
+    shield: "M12 2.2L5 5v6.2c0 3.8 2.5 7.3 7 9.2 4.5-1.9 7-5.4 7-9.2V5l-7-2.8z",
+    map: "M9 2 3 6v13l6-3.5 6 3.5 6-4V3l-6 3.5L9 2zm0 2.4 4 2.3v9.2l-4 2.3V4.4zm6 .1 4-2.3v10.6l-4 2.4V4.5z",
+    flame: "M12 22S8 18 8 13c0-2.5 1.5-4.5 3.5-5.2-.3 2.2.8 4.2 2.5 5C12.5 8 14 10.2 14 13c0 5-2 9-2 9z",
+    gem: "M12 2l7.5 9-7.5 9-7.5-9L12 2zm0 2.4L8.2 11h7.6L12 4.4z",
+    book: "M4 4h16v15l-8-2.8L4 19V4zm2 2v10.5l6-2.1 6 2.1V6H6z",
+    spark: "M13 2 4 14h6l-2 8 10-12h-6l1-8z"
+};
+function createFlairBadgeIcon(iconKey) {
+    const d = FLAIR_SVG_PATHS[iconKey] || FLAIR_SVG_PATHS.star;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "flair-badge-icon");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+    return svg;
+}
+function flairVisualForTitle(title) {
+    const s = String(title).toLowerCase();
+    if (/streak|week warrior|fortnight/.test(s)) return { mod: "flair-badge--ember", icon: "flame" };
+    if (/shard/.test(s)) return { mod: "flair-badge--crystal", icon: "gem" };
+    if (/gear|ritual|gleam/.test(s)) return { mod: "flair-badge--arcane", icon: "spark" };
+    if (/training/.test(s)) return { mod: "flair-badge--mint", icon: "book" };
+    if (/banish|cadet/.test(s)) return { mod: "flair-badge--steel", icon: "shield" };
+    if (/path|deep run|quest|rookie/.test(s)) return { mod: "flair-badge--forest", icon: "map" };
+    return { mod: "flair-badge--gold", icon: "star" };
+}
+function createFlairBadgeElement(rawTitle) {
+    const title = String(rawTitle || "").trim();
+    const { mod, icon } = flairVisualForTitle(title);
+    const wrap = document.createElement("span");
+    wrap.className = `flair-badge ${mod}`;
+    wrap.appendChild(createFlairBadgeIcon(icon));
+    const lab = document.createElement("span");
+    lab.className = "flair-badge-label";
+    lab.textContent = title;
+    wrap.appendChild(lab);
+    return wrap;
+}
+function grantProgressFlairsFromState() {
+    const ul = Math.max(1, Math.floor(typeof state.unlockedLevels === "number" ? state.unlockedLevels : 1));
+    const beast = Array.isArray(state.bestiary) ? state.bestiary.length : 0;
+    const shards = Math.max(0, Math.floor(typeof state.shards === "number" ? state.shards : 0));
+    const cos = Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0));
+    if (ul >= 1) addFlairIfNew("Math Cadet");
+    if (ul >= 2) addFlairIfNew("Quest Rookie");
+    if (beast >= 1) addFlairIfNew("First Banish");
+    if (ul >= 5) addFlairIfNew("Pathfinder");
+    if (ul >= 8) addFlairIfNew("Deep Run");
+    if (shards >= 80) addFlairIfNew("Shard Saver");
+    if (shards >= 400) addFlairIfNew("Shard Baron");
+    if (cos >= 1) addFlairIfNew("Geared Up");
+    if (cos >= 2) addFlairIfNew("Ritual Gleam");
+}
+function claimStreakMilestonesIfNeeded() {
+    const eg = state.engagement;
+    const n = Math.max(0, Math.floor(eg.streakCount || 0));
+    let gained = 0;
+    for (const t of [3, 7, 14]) {
+        const shards = EP_STREAK_MILESTONE_SHARDS[t];
+        if (shards == null || n < t) continue;
+        if (eg.streakMilestonesClaimed.includes(t)) continue;
+        eg.streakMilestonesClaimed.push(t);
+        eg.streakMilestonesClaimed.sort((a, b) => a - b);
+        gained += shards;
+        if (t === 3) addFlairIfNew("Streak Starter");
+        if (t === 7) addFlairIfNew("Week Warrior");
+        if (t === 14) addFlairIfNew("Fortnight Scholar");
+    }
+    return gained;
+}
+let engagementToastTimer = null;
+function showEngagementToast(message) {
+    const el = document.getElementById("engagement-toast");
+    if (!el) return;
+    el.textContent = String(message || "");
+    el.classList.remove("hidden", "opacity-0");
+    el.classList.add("opacity-100");
+    if (engagementToastTimer) clearTimeout(engagementToastTimer);
+    engagementToastTimer = setTimeout(() => {
+        el.classList.add("opacity-0");
+        setTimeout(() => el.classList.add("hidden"), 400);
+    }, 3200);
+}
+function grantParticipationShards(amount, toastMessage) {
+    const n = Math.max(0, Math.floor(amount));
+    if (n <= 0) return 0;
+    state.shards = Math.max(0, Math.floor(state.shards || 0) + n);
+    syncShardsUi();
+    const us = document.getElementById("upgrades-shards");
+    if (us) us.textContent = String(Math.max(0, Math.floor(state.shards || 0)));
+    if (toastMessage) showEngagementToast(toastMessage);
+    return n;
+}
+function processEngagementLoginSession() {
+    const today = localDateISO();
+    refillWeeklyStreakFreeze(today);
+    rollEngagementDayIfNeeded(today);
+    const eg = state.engagement;
+    if (eg.streakLastProcessedDate === today) {
+        refillWeeklyStreakFreeze(today);
+        rollEngagementDayIfNeeded(today);
+        grantProgressFlairsFromState();
+        syncEngagementHud();
+        return;
+    }
+    const anchor = eg.lastStreakAnchorDate || "";
+    let grantLoginStipend = true;
+    if (!anchor) {
+        eg.streakCount = Math.max(1, eg.streakCount || 1);
+    } else if (anchor === today) {
+        grantLoginStipend = false;
+    } else {
+        const gap = calendarDaysBetween(anchor, today);
+        if (gap === 1) {
+            eg.streakCount = Math.max(1, (eg.streakCount || 0) + 1);
+        } else if (gap === 2 && (eg.streakFreezeRemaining || 0) > 0) {
+            eg.streakFreezeRemaining = 0;
+            eg.streakCount = Math.max(1, (eg.streakCount || 0) + 1);
+            showEngagementToast("Streak freeze used — you kept your streak!");
+        } else if (gap >= 2) {
+            eg.streakCount = 1;
+        }
+    }
+    eg.lastStreakAnchorDate = today;
+    eg.streakLastProcessedDate = today;
+    eg.longestStreak = Math.max(eg.longestStreak || 0, eg.streakCount || 0);
+    if (grantLoginStipend) {
+        grantParticipationShards(EP_SHARD_LOGIN, `+${EP_SHARD_LOGIN} shards — daily check-in`);
+    }
+    const ms = claimStreakMilestonesIfNeeded();
+    if (ms > 0) grantParticipationShards(ms, `+${ms} streak milestone bonus!`);
+    grantProgressFlairsFromState();
+    syncEngagementHud();
+    if (state.playerName) saveLocalProfile(state.playerName);
+}
+function syncEngagementHud() {
+    const eg = state.engagement;
+    const streakEl = document.getElementById("map-streak-line");
+    if (streakEl) {
+        const n = Math.max(0, Math.floor(eg.streakCount || 0));
+        const fz = eg.streakFreezeRemaining > 0 ? " · freeze ready" : "";
+        streakEl.textContent = `Streak: ${n} day${n === 1 ? "" : "s"}${fz}`;
+    }
+    const qEl = document.getElementById("map-daily-quest-line");
+    if (qEl) {
+        const done = !!eg.dailyQuestBattleDone;
+        qEl.textContent = done
+            ? "Daily quest: complete a battle — done for today."
+            : "Daily quest: complete any battle today for bonus shards.";
+    }
+    const flairWrap = document.getElementById("player-flair-badges");
+    if (flairWrap) {
+        flairWrap.replaceChildren();
+        const titles = Array.isArray(eg.earnedFlair) ? eg.earnedFlair.filter(Boolean) : [];
+        const maxShow = 8;
+        const slice = titles.length > maxShow ? titles.slice(-maxShow) : titles;
+        slice.forEach((raw) => {
+            flairWrap.appendChild(createFlairBadgeElement(raw));
+        });
+    }
+}
+function tryGrantDailyQuestBattleBonus() {
+    const today = localDateISO();
+    rollEngagementDayIfNeeded(today);
+    const eg = state.engagement;
+    if (eg.dailyQuestBattleDone) return 0;
+    eg.dailyQuestBattleDone = true;
+    const n = EP_SHARD_DAILY_QUEST_BATTLE;
+    return n;
+}
+function grantPracticeParticipationIfAllowed() {
+    const today = localDateISO();
+    rollEngagementDayIfNeeded(today);
+    const eg = state.engagement;
+    if ((eg.practiceGrantsToday || 0) >= EP_PRACTICE_DAILY_CAP) return 0;
+    eg.practiceGrantsToday = (eg.practiceGrantsToday || 0) + 1;
+    eg.lifetimePracticeGrants = (eg.lifetimePracticeGrants || 0) + 1;
+    if (eg.lifetimePracticeGrants >= 20) addFlairIfNew("Training Regular");
+    return EP_SHARD_PRACTICE;
 }
  async function persistMergedProfileToCloud(name, merged) {
     if (!isFirebaseReady || !db) return false;
@@ -469,6 +818,7 @@ function mergeProfileRecords(cloudDoc, localDoc) {
             cosmeticsTier: merged.cosmeticsTier ?? 0,
             bestiary: Array.isArray(merged.bestiary) ? merged.bestiary : [],
             bossCacheByLevel: merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : {},
+            engagement: normalizeEngagement(merged.engagement),
             displayName: name,
             lastSyncedAt: Date.now()
         }, { merge: true });
@@ -497,6 +847,7 @@ async function syncCurrentProfileToCloud() {
             cosmeticsTier: typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0,
             bestiary: Array.isArray(state.bestiary) ? state.bestiary.slice(0, 200) : [],
             bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {},
+            engagement: engagementSnapshotFromState(),
             displayName: name,
             lastSyncedAt: Date.now()
         }, { merge: true });
@@ -540,7 +891,8 @@ async function reconcileProfileWithCloud() {
         shards: typeof state.shards === "number" ? state.shards : 0,
         cosmeticsTier: typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0,
         bestiary: Array.isArray(state.bestiary) ? state.bestiary : [],
-        bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {}
+        bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {},
+        engagement: engagementSnapshotFromState()
     };
     const m1 = mergeProfileRecords(cloud, local);
     const merged = mergeProfileRecords(m1, session);
@@ -551,13 +903,24 @@ async function reconcileProfileWithCloud() {
     state.cosmeticsTier = merged.cosmeticsTier ?? 0;
     state.bestiary = Array.isArray(merged.bestiary) ? merged.bestiary : [];
     state.bossCacheByLevel = merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : state.bossCacheByLevel;
+    applyEngagementToState(merged.engagement);
+    processEngagementLoginSession();
+    ensureBestiaryMatchesUnlockedLevels();
+    syncShardsUi();
     saveLocalProfile(name);
-    await persistMergedProfileToCloud(name, { ...merged, skillProfile: state.skillProfile });
+    await persistMergedProfileToCloud(name, {
+        ...merged,
+        skillProfile: state.skillProfile,
+        bestiary: state.bestiary,
+        bossCacheByLevel: state.bossCacheByLevel,
+        engagement: engagementSnapshotFromState()
+    });
     const ls = document.getElementById("level-screen");
     if (ls && !ls.classList.contains("hidden")) {
         renderLevelMenu();
         syncAiRouteNotice();
         syncMapQuestionBufferHint();
+        syncShardsUi();
     }
 }
  let cloudSyncIntervalId = null;
@@ -736,9 +1099,19 @@ async function initFirebase() {
     state.cosmeticsTier = merged.cosmeticsTier ?? 0;
     state.bestiary = Array.isArray(merged.bestiary) ? merged.bestiary : [];
     state.bossCacheByLevel = merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : state.bossCacheByLevel;
+    applyEngagementToState(merged.engagement);
+    processEngagementLoginSession();
+    ensureBestiaryMatchesUnlockedLevels();
+    syncShardsUi();
     saveLocalProfile(name);
      if (isFirebaseReady && db) {
-        await persistMergedProfileToCloud(name, { ...merged, skillProfile: state.skillProfile });
+        await persistMergedProfileToCloud(name, {
+            ...merged,
+            skillProfile: state.skillProfile,
+            bestiary: state.bestiary,
+            bossCacheByLevel: state.bossCacheByLevel,
+            engagement: engagementSnapshotFromState()
+        });
     } else {
         state.lastCloudSyncAt = Date.now();
         state.cloudSyncError = null;
@@ -750,7 +1123,7 @@ async function initFirebase() {
     renderLevelMenu();
     syncAiRouteNotice();
     syncMapQuestionBufferHint();
-    prefetchQuestion(); // Non-blocking: Fetches in the background while the user views the map
+    prefetchQuestion(Math.max(1, typeof state.unlockedLevels === "number" ? state.unlockedLevels : 1));
     showCloudSyncBadge();
     syncQuestionsApiBadge();
     startCloudSyncHeartbeat();
@@ -802,7 +1175,27 @@ async function initFirebase() {
     });
     state.bestiary = state.bestiary.slice(0, 200);
 }
+/** Beating the frontier at level N is what raises unlockedLevels past N; fill any missing entries (legacy saves, missed syncs). */
+function ensureBestiaryMatchesUnlockedLevels() {
+    const ul = typeof state.unlockedLevels === "number" && state.unlockedLevels >= 1 ? state.unlockedLevels : 1;
+    for (let lv = 1; lv < ul; lv++) {
+        addBossToBestiary(lv);
+    }
+}
+function closeOtherMapHudOverlays(except) {
+    if (except !== "bestiary") document.getElementById("bestiary-overlay")?.classList.add("hidden");
+    if (except !== "upgrades") document.getElementById("upgrades-overlay")?.classList.add("hidden");
+    if (except !== "practice") {
+        document.getElementById("practice-overlay")?.classList.add("hidden");
+        practiceActiveQuestion = null;
+    }
+}
+/** Close bestiary / upgrades / practice before battle or when leaving map. */
+function closeAllMapHudOverlays() {
+    closeOtherMapHudOverlays(null);
+}
  window.openBestiary = () => {
+    closeOtherMapHudOverlays("bestiary");
     document.getElementById("bestiary-overlay")?.classList.remove("hidden");
     renderBestiary();
 };
@@ -839,6 +1232,7 @@ window.closeBestiary = () => document.getElementById("bestiary-overlay")?.classL
         .join("");
 }
  window.openUpgrades = () => {
+    closeOtherMapHudOverlays("upgrades");
     document.getElementById("upgrades-overlay")?.classList.remove("hidden");
     renderUpgrades();
 };
@@ -913,7 +1307,7 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
             `Topic: ${JSON.stringify(String(q.topic_category || meta.topic || ""))}\n` +
             `Question: ${JSON.stringify(String(q.text || ""))}\n\n` +
             `Return JSON keys:\n- hint: string (3-6 short sentences max; tactical tone; include an equation if helpful). ` +
-            `Math only as $...$ inline TeX (no $$, no tables, no # or **).\n`;
+            `Math only as \\(...\\) inline TeX (no single-dollar math delimiters; no $$, no tables, no # or **).\n`;
         debugLogAiPrompt("dashscope.scan", user);
         const body = JSON.stringify({
             model: dsModel,
@@ -944,6 +1338,10 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
     }
 };
  let fetchPromise = null;
+/** Level the in-flight `fetchPromise` was built for; null if none. */
+let prefetchPromiseForLevel = null;
+let prefetchRunId = 0;
+let prefetchInFlightCount = 0;
 let prefetchInFlight = false;
  function clearPrefetchFailureUi() {
     state.aiOfflineHint = null;
@@ -952,23 +1350,31 @@ let prefetchInFlight = false;
  function setPrefetchFailureFromError(e) {
     const m = e && e.message ? String(e.message) : String(e);
     state.lastPrefetchError = m.slice(0, 280);
-    const is429 = (e && e.isRateLimit) || /(^|\D)429(\D|$)|rate limit/i.test(state.lastPrefetchError);
+    const err = state.lastPrefetchError;
+    const is429 =
+        (e && e.isRateLimit === true) ||
+        /\b429\b/.test(err) ||
+        /\btoo many requests\b/i.test(err) ||
+        /\brate limit exceeded\b/i.test(err);
     if (is429) {
         state.aiOfflineHint =
-            "Live AI hit HTTP 429 (rate limit). Free models are often busy; this battle uses the offline pool until a request succeeds. " +
-            state.lastPrefetchError;
-    } else if (/no AI API key|no DashScope API key/i.test(state.lastPrefetchError)) {
+            "Live AI returned HTTP 429 (too many requests). Using the offline question pool. Technical detail: " + err;
+    } else if (/no AI API key|no DashScope API key/i.test(err)) {
         state.aiOfflineHint =
             "No DashScope key in ai-config.js — questions come from the built-in offline pool only.";
-    } else if (/PREFETCH_TIMEOUT|did not finish within|Live AI slow or stalled/i.test(state.lastPrefetchError)) {
+    } else if (/PREFETCH_TIMEOUT|did not finish within|Live AI slow or stalled/i.test(err)) {
         state.aiOfflineHint =
-            "Live AI took too long (rate limits or slow network). This battle uses the offline pool — check DashScope in ai-config.js or try again.";
-    } else if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(state.lastPrefetchError)) {
+            "Live AI hit the time limit before the question was ready (large prompt, slow API, or multiple retries in one run). Using the offline pool. Allow more time: ?aiTimeoutMs=90000 or window.__prefetch_ai_timeout_ms = 90000.";
+    } else if (/HTTP 404|wrong endpoint|chat completions/i.test(err)) {
         state.aiOfflineHint =
-            (state.lastPrefetchError || "") +
+            "Live AI returned 404 — the chat URL is wrong. Default base is https://dashscope-intl.aliyuncs.com/compatible-mode/v1 plus /chat/completions, or set window.__dashscope_chat_completions_url to the full POST URL. " +
+            err;
+    } else if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(err)) {
+        state.aiOfflineHint =
+            err +
             " If you use Alibaba DashScope from a static web page, the API often blocks browser CORS — use a small same-origin proxy and set window.__dashscope_chat_completions_url to your proxy URL.";
     } else {
-        state.aiOfflineHint = "Live AI request failed — using the offline question pool. " + state.lastPrefetchError;
+        state.aiOfflineHint = "Live AI request failed — using the offline question pool. " + err;
     }
 }
  function syncAiRouteNotice() {
@@ -1223,11 +1629,22 @@ let prefetchInFlight = false;
     </svg>`;
      container.querySelectorAll("g[data-level]").forEach((g) => {
         const lv = parseInt(g.getAttribute("data-level"), 10);
+        const warmPrefetchForNode = () => {
+            if (lv <= state.unlockedLevels) void prefetchQuestion(lv);
+        };
+        g.addEventListener("focus", warmPrefetchForNode);
         g.addEventListener("click", () => {
-            if (lv <= state.unlockedLevels) startGame(lv);
+            if (lv <= state.unlockedLevels) {
+                void prefetchQuestion(lv);
+                startGame(lv);
+            }
         });
         g.addEventListener("keydown", (e) => {
-            if ((e.key === "Enter" || e.key === " ") && lv <= state.unlockedLevels) { e.preventDefault(); startGame(lv); }
+            if ((e.key === "Enter" || e.key === " ") && lv <= state.unlockedLevels) {
+                e.preventDefault();
+                void prefetchQuestion(lv);
+                startGame(lv);
+            }
         });
         if (lv <= state.unlockedLevels) {
             g.setAttribute("tabindex", "0");
@@ -1238,6 +1655,7 @@ let prefetchInFlight = false;
     if (mapScroll) mapScroll.scrollTop = 0;
     syncAiRouteNotice();
     syncMapQuestionBufferHint();
+    syncEngagementHud();
     syncQuestionsApiBadge();
      // Non-blocking: generate bosses for newly visible infinite levels (so map portraits/names fill in).
     const targets = [];
@@ -1253,13 +1671,13 @@ let prefetchInFlight = false;
         }
     });
 }
- /** Ensures battle screen never waits unbounded on live AI (rate limits / slow API). */
+ /** Ensures battle screen never waits unbounded on live AI. */
 async function raceWithPrefetchTimeout(promise, ms) {
     let tid;
     const timeout = new Promise((_, rej) => {
         tid = setTimeout(() => {
             const e = new Error(
-                `Live AI did not finish within ${Math.round(ms / 1000)}s (often rate limits or a long model chain). Using offline questions.`
+                `Live AI did not finish within ${Math.round(ms / 1000)}s — using offline questions.`
             );
             e.code = "PREFETCH_TIMEOUT";
             rej(e);
@@ -1286,6 +1704,14 @@ async function raceWithPrefetchTimeout(promise, ms) {
             continue;
         }
         if (response.ok) return response;
+        if (response.status === 404 || response.status === 401 || response.status === 403) {
+            const snippet = await response.text().catch(() => "");
+            const hint =
+                response.status === 404
+                    ? "Wrong endpoint (expected …/compatible-mode/v1/chat/completions). If you set window.__dashscope_chat_completions_url, it must be the full chat URL, not only the API base."
+                    : "Check API key and account access.";
+            throw new Error(`DashScope HTTP ${response.status} — ${hint}${snippet ? ` ${snippet.slice(0, 140)}` : ""}`);
+        }
         if (response.status === 429 && i < retries - 1) {
             const raHeader = response.headers.get("Retry-After");
             let raMs = 0;
@@ -1311,60 +1737,60 @@ const FALLBACK_QUESTIONS = [
     {
         topic_category: "Algebra",
         criterion: "A",
-        text: "Solve $x+5=12$.",
+        text: "Solve \\(x+5=12\\).",
         expected_answer: "7",
-        success_criteria: "- Show the inverse operation.\n- Write the final value of $x$.\n- Quick check by substituting back.",
-        ideal_explanation: "Subtract $5$ from both sides: $x = 12 - 5 = 7$. Check: $7+5=12$.",
+        success_criteria: "- Show the inverse operation.\n- Write the final value of \\(x\\).\n- Quick check by substituting back.",
+        ideal_explanation: "Subtract \\(5\\) from both sides: \\(x = 12 - 5 = 7\\). Check: \\(7+5=12\\).",
         plotly_spec: "",
         type: "input"
     },
     {
         topic_category: "Arithmetic",
         criterion: "A",
-        text: "Calculate $2 + 3 \\times 4$.",
+        text: "Calculate \\(2 + 3 \\times 4\\).",
         expected_answer: "14",
         success_criteria: "- Use correct order of operations.\n- Show the intermediate multiplication.",
-        ideal_explanation: "Multiply first: $3 \\times 4 = 12$, then $2 + 12 = 14$.",
+        ideal_explanation: "Multiply first: \\(3 \\times 4 = 12\\), then \\(2 + 12 = 14\\).",
         plotly_spec: "",
         type: "input"
     },
     {
         topic_category: "Arithmetic",
         criterion: "A",
-        text: "Calculate $\\frac{1}{2} + \\frac{1}{4}$.",
-        expected_answer: "$\\frac{3}{4}$",
+        text: "Calculate \\(\\frac{1}{2} + \\frac{1}{4}\\).",
+        expected_answer: "\\(\\frac{3}{4}\\)",
         success_criteria: "- Use a common denominator.\n- Combine numerators.\n- Simplify if needed.",
-        ideal_explanation: "Use a common denominator: $\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}$.",
+        ideal_explanation: "Use a common denominator: \\(\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}\\).",
         plotly_spec: "",
         type: "input"
     },
     {
         topic_category: "Arithmetic",
         criterion: "A",
-        text: "Calculate $8 - 3$.",
+        text: "Calculate \\(8 - 3\\).",
         expected_answer: "5",
         success_criteria: "- Correct subtraction.\n- Final statement.",
-        ideal_explanation: "Subtract: $8 - 3 = 5$.",
+        ideal_explanation: "Subtract: \\(8 - 3 = 5\\).",
         plotly_spec: "",
         type: "input"
     },
     {
         topic_category: "Geometry",
         criterion: "C",
-        text: "A square has side length $4$. Determine its perimeter.",
+        text: "A square has side length \\(4\\). Determine its perimeter.",
         expected_answer: "16",
         success_criteria: "- State the perimeter rule.\n- Show multiplication.\n- Include units if given.",
-        ideal_explanation: "Perimeter of a square is $4 \\times \\text{side} = 4 \\times 4 = 16$.",
+        ideal_explanation: "Perimeter of a square is \\(4 \\times \\text{side} = 4 \\times 4 = 16\\).",
         plotly_spec: "",
         type: "input"
     },
     {
         topic_category: "Arithmetic",
         criterion: "A",
-        text: "Calculate $9 \\div 3$.",
+        text: "Calculate \\(9 \\div 3\\).",
         expected_answer: "3",
         success_criteria: "- Correct division.\n- Final statement.",
-        ideal_explanation: "$9 \\div 3 = 3$.",
+        ideal_explanation: "\\(9 \\div 3 = 3\\).",
         plotly_spec: "",
         type: "input"
     }
@@ -1415,8 +1841,7 @@ const FALLBACK_QUESTIONS = [
         `- Allowed focus areas for this band: ${allowedByBand.join("; ")}.\n` +
         `- Explicitly avoid: ${outOfScope.join(", ")}.\n` +
         `- Use MYP-friendly command terms in the stem when natural (e.g., "solve", "calculate", "determine", "simplify").\n` +
-        `- Explanation quality (Rubicon-style): show the method clearly, include 1 quick check when possible, and keep the reading level ~age 12–14.\n` +
-        `- Make distractors realistic: common student mistakes for this band (sign error, order of operations, wrong percent base, etc.).\n`
+        `- Explanation quality (Rubicon-style): show the method clearly, include 1 quick check when possible, and keep the reading level ~age 12–14.\n`
     );
 }
  /** Compact per-topic stats for the question LLM (retention / progression tuning). */
@@ -1440,35 +1865,56 @@ function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
     if (!slice.length) return "(no skill profile yet — default to Topic below)";
     return slice.map((r) => `${r.topic}: ${r.c}/${r.a} correct${r.pct != null ? ` (${r.pct}%)` : ""}`).join("; ");
 }
- function buildMathQuestionPrompt() {
+ /** One line: what the math must look like for each strand (stops “everything is a wallet algebra” drift). */
+function strandShapeRequirement(topic) {
+    const t = String(topic || "");
+    const lines = {
+        Algebra:
+            "The core task must feature variables, expressions, equations, or inequalities (solve or manipulate symbols)—not merely a multi-step shopping tally with only arithmetic on named amounts.",
+        Arithmetic:
+            "The core task must feature integers, order of operations, factors/multiples, or mental calculation strategies. If there is a story, every payment or change uses the SAME unit and commodity as the starting amount (one currency/token name only).",
+        Geometry:
+            "The core task must feature lengths, angles, area, perimeter, coordinates, transformations, or shapes—geometry must be essential to the answer, not decoration.",
+        "Fractions & Percent":
+            "The core task must require fractions, ratios, percents, or decimal proportion reasoning as the main mathematical move (not just integers dressed as a story).",
+        "Patterns & Sequences":
+            "The core task must feature a sequence, table, or repeating rule; the student finds a pattern, next term, nth term, or justifies a rule—avoid unrelated percent-of-wallet chains.",
+        "Data & Probability":
+            "The core task must feature data (table, chart read-off, mean/median/range) or probability from counts/outcomes—statistics or chance must be central.",
+        "Real-Life Modeling":
+            "The core task must interpret a believable context with explicit assumptions; keep ONE consistent measure for each resource (e.g. all values in gold coins OR all in dollars—never subtract “dollars paid” from “coins held” without a stated exchange). Ask for reasonableness or a limitation when it fits the band."
+    };
+    return lines[t] || "Align the mathematics authentically with this strand.";
+}
+ function buildMathQuestionPrompt(mapLevelOverride) {
+    const mapLevel =
+        Number.isFinite(mapLevelOverride) && mapLevelOverride >= 1
+            ? Math.floor(mapLevelOverride)
+            : state.currentLevel;
     const easier = state.forceEasierNextQuestion === true;
-    const diff = easier ? "Introductory" : (state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8"));
+    const diff = easier ? "Introductory" : (mapLevel <= 3 ? "Introductory" : (mapLevel <= 6 ? "Grade 7" : "Grade 8"));
     const difficultyFromLevel =
-        state.currentLevel <= 3 ? "Introductory (map levels 1–3)" : state.currentLevel <= 6 ? "Grade 7 (map levels 4–6)" : "Grade 8 (map level 7+)";
+        mapLevel <= 3 ? "Introductory (map levels 1–3)" : mapLevel <= 6 ? "Grade 7 (map levels 4–6)" : "Grade 8 (map level 7+)";
     const difficultyCalculationLine = easier
-        ? `Difficulty label is Introductory because the player is on a remedial/easier question this round (potion or struggle path) — use Foundations-style tasks even if map level is ${state.currentLevel}.`
-        : `Difficulty label follows map level: level ${state.currentLevel} → ${difficultyFromLevel.split("(")[0].trim()}.`;
+        ? `Difficulty label is Introductory because the player is on a remedial/easier question this round (potion or struggle path) — use Foundations-style tasks even if map level is ${mapLevel}.`
+        : `Difficulty label follows map level: level ${mapLevel} → ${difficultyFromLevel.split("(")[0].trim()}.`;
     const criterionCycle = ["A", "B", "C", "D"];
     const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
-    const enemyName = String(getQuestNode(state.currentLevel)?.name || "Enemy");
+    const enemyName = String(getQuestNode(mapLevel)?.name || "Enemy");
     const heroName = String(state.playerName || "").trim();
     const heroNameJson = heroName ? JSON.stringify(heroName) : "";
     if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
     ensureCanonicalSkillTopicsInPlace(state.skillProfile);
     const retentionTopic = pickRetentionTopic(state.skillProfile);
-    // ~70% breadth: random strand among the six that are not the retention anchor; ~30% reinforce the retention strand.
-    const progressionPool = CANONICAL_SKILL_TOPICS.filter((t) => t !== retentionTopic);
+    const rotationTopic = CANONICAL_SKILL_TOPICS[state.turnIndex % CANONICAL_SKILL_TOPICS.length];
     let chosenTopic;
-    let topicPedagogyMode;
     let topicPedagogyExplanation;
-    if (progressionPool.length && Math.random() < 0.7) {
-        chosenTopic = progressionPool[Math.floor(Math.random() * progressionPool.length)];
-        topicPedagogyMode = "progression";
-        topicPedagogyExplanation = `BREADTH (~70%): topic is a random strand from the other six MYP strands (not the current retention anchor “${retentionTopic}”), so most fights spread across the curriculum.`;
-    } else {
+    if (Math.random() < 0.22) {
         chosenTopic = retentionTopic;
-        topicPedagogyMode = "retention";
-        topicPedagogyExplanation = `RETENTION (~30%): reinforce the profile focus strand “${retentionTopic}” (under-sampled strands first until ${SKILL_TOPIC_MIN_SAMPLES} attempts each, then lowest success rate among strands).`;
+        topicPedagogyExplanation = `RETENTION (~22%): reinforce “${retentionTopic}” (under-sampled strands first until ${SKILL_TOPIC_MIN_SAMPLES} attempts each, then lowest success rate among strands with data).`;
+    } else {
+        chosenTopic = rotationTopic;
+        topicPedagogyExplanation = `ROTATION (default): strand is “${rotationTopic}” — cycles through all ${CANONICAL_SKILL_TOPICS.length} MYP strands by battle index so no single strand (including Algebra) can dominate.`;
     }
     const skillSnapshot = formatSkillSnapshotForPrompt(state.skillProfile);
     const nonce =
@@ -1487,61 +1933,49 @@ function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
         const snippet = String(prevStem).trim().slice(0, 320);
         avoidPrior = `\n\nThe player was just shown this stem — you must NOT repeat it, reuse the same numbers with different wording, or mirror its structure. Produce a clearly different problem:\n${JSON.stringify(snippet)}`;
     }
-    return `[PROMPT_VERSION ${PROMPT_VERSION}] [SEED: ${Date.now()}] [NONCE: ${nonce}]
+    const promptBody = `[PROMPT_VERSION ${PROMPT_VERSION}] [SEED: ${Date.now()}] [NONCE: ${nonce}]
 
-Role: You are an expert IB Middle Years Programme (MYP) Math Examiner acting as a slightly snarky Dungeon Master for a middle school RPG.
+Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
 
-Current Combat Parameters:
-- Enemy Name: ${enemyName}
-- Student hero name (profile / level character — use in the opening taunt): ${heroNameJson ? heroNameJson : "(not set — taunt in second person only; do not invent a name)"}
-- Map level (progression gate): ${state.currentLevel}
-- MYP criterion focus: ${targetCriterion} (A: knowing & understanding — facts, procedures; B: investigating patterns — rules, generalisation, justification; C: communicating — representations and clear mathematical language in text; D: applying in real-life contexts — modelling, assumptions, interpretation, reasonableness)
-
-Difficulty (computed for this player — obey the label AND the curriculum band in the constraints block):
-- Display difficulty: ${diff}
-- How it is calculated: ${difficultyCalculationLine}
-- The separate CURRICULUM CONSTRAINTS block below uses the same effective band as the game (Foundations if easier flag, else map level).
-
-Retention vs progression (topic choice — mirrors the player profile algorithm):
+Combat (follow HARD REQUIREMENTS at the end for JSON keys and plotly rules):
+- Speaker (enemy): ${JSON.stringify(enemyName)} — taunt in their voice; name self at least once; never use the hero’s name as the monster’s identity.
+- Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
+- Map level: ${mapLevel} · Display difficulty: ${diff} (${difficultyCalculationLine})
+- MYP criterion this round: ${targetCriterion} (A facts/procedures · B patterns/generalisation · C clear math language · D modelling/context)
 - ${topicPedagogyExplanation}
-- Mode this round: ${topicPedagogyMode.toUpperCase()}
-- Retention anchor strand (used ~30% of battles; ~70% use a different strand for breadth): ${retentionTopic}
-- Topic for THIS question (must align the math): ${chosenTopic}
-- Per-topic snapshot (corrects/attempts; use to calibrate within the band — scaffold if mastery looks low on ${chosenTopic}, stretch slightly if strong, never leave MYP scope): ${skillSnapshot}
+- Retention candidate when mode is RETENTION: ${retentionTopic}
+- topic_category for this question (verbatim): ${JSON.stringify(chosenTopic)} — syllabus label only, not ${JSON.stringify(enemyName)}’s name (no “Algebras” swarms).
+- Strand shape (math must match, not just the label): ${strandShapeRequirement(chosenTopic)}
+- Skill snapshot (scaffold weak / stretch strong; stay MYP): ${skillSnapshot}
 
-Pedagogical instruction: Maximize long-term progression (unlock-ready skills, breadth) while protecting retention (do not make the weakest areas feel impossible). For this round, honor Topic=${chosenTopic} at Difficulty=${diff}. If the snapshot shows ${chosenTopic} with very low success, favor clarity, one main move, and a fair check; if healthy, you may add one extra layer still appropriate to ${diff}.
+Pedagogy: Balance progression and retention. Honor Topic=${chosenTopic} at ${diff}; if ${chosenTopic} looks weak in the snapshot, keep one clear main move.
 
-Task: Generate exactly one rigorous, MYP-aligned math question for this battle.
+Output: One rigorous MYP question. Machine rules (JSON, plotly, strings) win over flavor — but prefer an original stem over a generic one.
 
-Balanced goal: The game needs predictable machine output (valid JSON, exact keys, safe strings) so the UI and grader work. The student needs fresh, exciting story and voice so practice stays engaging. Do both: never break JSON or field rules for the sake of flavor; never default to a bland, interchangeable stem when you can invent something original that still fits Topic, Difficulty, and the band below.
+Structure & content:
+- Single JSON object, no fences (details in HARD REQUIREMENTS). type "input", criterion "${targetCriterion}", no MCQ.
+- Word problems: one consistent unit/ledger end-to-end; expected_answer and ideal_explanation match that ledger.
+- Math in \\(...\\) only; currency like $5 once, not $5$; in JSON double backslashes in TeX (\\\\text, \\\\times, \\\\frac).
+- "text": (1) short in-character taunt per Speaker/Addressee above, then (2) the task, plain and answerable. One mini-quest, not two pasted blocks.
+- ideal_explanation: smart 10-year-old voice; formulas only in \\(...\\).
+- Plotly: if plotly_spec is "", never claim a chart/visual in prose. Quantity / object stories (bags, marbles, gave away, how many left, …) → non-empty plotly_spec with numeric traces; prefer bars x=["Start","Change","End"] with signed change, or a number-line scatter. If the math has a natural picture (equations, rates, geometry), include a minimal chart; use "" only when a graph adds nothing.
 
-LAYER 1 — Predictable for the application (follow exactly; do not improvise structure here):
-- Output one JSON object only, no markdown or code fences around it. Keys must match the hard-requirements suffix exactly. type must be "input". criterion must be "${targetCriterion}" (same as MYP criterion focus above). No MCQ options.
-- Math notation: LaTeX inside inline $...$ only (never $$...$$). For units (cm, m, %, etc.) use \\\\text{...} inside math; in JSON strings double every backslash in TeX (\\\\text, \\\\times, \\\\frac) so parsing does not turn \\\\t into a tab.
-- plotly_spec discipline: if it is "", never claim there is a graph/chart/visual in text or ideal_explanation. If you use a quantity story (bags, apples, gave away, how many left, in all, etc.), plotly_spec must be non-empty with numeric Plotly data (see strict block below).
+Creative: Original scenario; optional sparks (not data): ${contextSeed} · ${dmDeliveryNudge}
+Vary task style with the criterion (solve, simplify, justify pattern, model, interpret). Skip tired marble-bag setups unless the topic needs them — then you must chart.
 ${avoidPrior}
-${buildMypConstraintsBlock(state.forceEasierNextQuestion === true ? 1 : state.currentLevel)}
-
-LAYER 2 — Novel for the student (use your full training freely; stay inside MYP scope above):
-- Invent an original scenario: names, setting, stakes, and humor. Draw from any age-appropriate context that fits the Topic—not only fantasy, not only the seed lines.
-- Optional sparks (mood board only; not a script—the app does not read these as data). If you have a fresher idea, use it instead:
-  - Setting / mood spark: ${contextSeed}
-  - Taunt delivery spark: ${dmDeliveryNudge}
-- The "text" field MUST contain two clear parts in order: (1) The Taunt — short, slightly arrogant or dramatic, math-themed challenge from ${enemyName} or the scene (ages 11–13). ${heroNameJson ? `Address the hero by name at least once in the taunt where it sounds natural (name: ${heroNameJson}).` : "Address the player as you/your; no name was provided."} (2) The Task — the actual math question, plainly stated so a student knows what to answer. Do not bury the math in confusion unless the topic is genuinely Real-Life Modeling and the task is still unambiguous.
-- Taunt + task should read as one mini-quest, not two pasted paragraphs. Prefer specific invented details over generic filler (e.g. tired “Monday morning bus” tropes unless travel/timetable math truly fits).
-- Vary mathematical surface form when it suits the criterion: simplify, solve, determine, model with an equation, interpret a tiny table or description, justify a pattern (especially for B). For Criterion D, use believable messy numbers, budgets, distances, schedules, or measurements; ask for interpretation ("does this make sense?"), an explicit assumption, or a limitation of the model when it fits the band. Avoid repeating the same story skeleton every time; skip marble-bag clichés unless appropriate—and then include the required chart.
-
-For ideal_explanation: write as if explaining to a smart 10-year-old — short sentences, everyday words, friendly tone, optional one simple analogy; still be mathematically correct and use LaTeX for formulas inside $...$ only (no Markdown, no pipe tables, no **). Do not sound like a dry textbook abstract.
-
-For charts vs words: If plotly_spec is "", you must NOT say there is a graph, picture, chart, plot, or "visual" in "text" or "ideal_explanation". If you want a chart, set plotly_spec to a non-empty JSON STRING (escaped in the outer JSON) with valid Plotly content: at least one trace with numeric coordinates (e.g. scatter with "x" and "y" arrays of numbers, or bars). The app renders only plotly_spec — promising a visual in prose without filling plotly_spec is wrong.
-
-Default toward a chart when the math has a clear picture: linear or simple equations, inequalities on a number line, proportional relationships, "y vs x", comparing two quantities, or geometry with lengths/angles. Use a minimal Plotly chart (e.g. scatter mode lines+markers through two points, or a bar chart for two numbers). Reserve plotly_spec "" only when a graph would truly add nothing (e.g. "which expression is prime?", pure symbol push with no numeric story).
-
-STRICT (addition/subtraction & stories): If the question OR ideal_explanation involves marbles, apples, cookies, toys, a bag/jar/box, "gave away", "started with", "take out", "how many left", "in all", or any similar real-world quantity story, plotly_spec MUST be a non-empty valid Plotly string — this is required, not optional.
-
-Preferred chart for these: a bar chart with x = ["Start","Change","End"] and y = [start, change, end], where change is NEGATIVE for take-away/spent/gave-away and POSITIVE for added/received. This directly shows the math step.
-
-Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
+${buildMypConstraintsBlock(state.forceEasierNextQuestion === true ? 1 : mapLevel)}`;
+    return { prompt: promptBody, chosenTopic, targetCriterion };
+}
+function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
+    if (!q || !pedagogy || typeof pedagogy !== "object") return q;
+    const topic = pedagogy.chosenTopic;
+    const crit = pedagogy.targetCriterion;
+    if (topic && typeof topic === "string") q.topic_category = topic;
+    if (crit != null && String(crit).trim()) {
+        const u = String(crit).trim().toUpperCase().slice(0, 1);
+        if (u === "A" || u === "B" || u === "C" || u === "D") q.criterion = u;
+    }
+    return q;
 }
  async function smokePingDashScope(dashscopeKey, modelId, signal) {
     const url = dashscopeChatCompletionsUrl();
@@ -1667,24 +2101,22 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
 }
  function dashScopeQuestionUserSuffix() {
     return (
-        "\n\nHard requirements (Qwen-compatible JSON):\n" +
-        '- type must be the string "input".\n' +
-        '- criterion must be one of "A", "B", "C", "D" (same letter as MYP criterion focus in the prompt).\n' +
-        "- expected_answer: the canonical final answer as a short string (may include LaTeX).\n" +
-        "- success_criteria: 2–5 bullet points (as a single string). Each bullet must describe text evidence that would justify achievement levels 7–8 for the targeted criterion letter ONLY (e.g. B: tested cases + generalisation; C: clear structure and mathematical language; D: model with assumption and/or comment on plausibility in context). Do not bundle other criteria into these bullets.\n" +
-        '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes; never a raw object at this key. If "", do not mention any graph/chart/visual in text or ideal_explanation. If not "", include real numeric trace data so a chart can render (e.g. scatter with numeric "x" and "y").\n' +
-        "- Curriculum: keep within IB MYP Year 7–8 scope and obey the band indicated in the prompt; avoid calculus/trig/logs/quadratic formula.\n" +
-        '- REQUIRED: If text or ideal_explanation mentions marbles, apples, cookies, toys, a bag/box/jar, "gave"/"take away"/"started with"/"how many left"/"in all" or similar quantity stories, plotly_spec MUST NOT be "". Use a number-line scatter (y all 0) or a bar chart with numeric heights.\n' +
-        '- Prefer non-empty plotly_spec when the math has a natural picture (equations, lines, rates, two quantities to compare, number-line ideas); a minimal scatter or bar chart is enough. Use "" only when a graph would not help.\n' +
-        "- ideal_explanation: short teacher-style solution steps and a quick check; LaTeX for math; keep it readable for Year 7/8.\n" +
-        '- CRITICAL for "text", "ideal_explanation", and "success_criteria": NO Markdown. No pipe tables (| or ---|---), # headings, **bold**, backticks, or ``` fences. Lists: plain lines starting with "- " only. For grids use labeled lines ("Day 1: 5 laps"). Math: $...$ inline only — never $$...$$.\n' +
-        "- LaTeX in JSON strings: double every backslash in TeX commands. A single backslash before t-e-x-t is parsed as a TAB, which breaks \\\\text and makes cm^3 look like extcm^3; the same issue hits \\\\times and \\\\frac.\n" +
+        "\n\nHARD REQUIREMENTS (Qwen JSON — follow exactly):\n" +
+        "- Return one JSON object with exactly these keys (no extras): topic_category, criterion, text, expected_answer, success_criteria, ideal_explanation, plotly_spec, type.\n" +
+        '- type must be "input". criterion must match the letter in the prompt (A/B/C/D).\n' +
+        "- expected_answer: short canonical answer (LaTeX OK); same units/ledger as the story.\n" +
+        "- success_criteria: one string with 2–5 lines starting \"- \"; each line = evidence for levels 7–8 for the prompt’s criterion letter only (do not mix in other criteria).\n" +
+        '- plotly_spec: always a string. Use "" OR a JSON-encoded Plotly spec (escaped quotes); never a raw object. If "", never mention graph/chart/visual in text or ideal_explanation. If not "", traces need numeric x/y (or bar heights). Object/quantity stories (bags, marbles, apples, gave away, how many left, in all, …) → plotly_spec MUST NOT be "" — use bars or a number-line scatter.\n' +
+        "- ideal_explanation: brief worked solution + quick check; readable for Year 7–8.\n" +
+        "- Scope: IB MYP Year 7–8 as in the prompt’s band; no calculus/trig/logs/quadratic formula as the main skill.\n" +
+        "- LaTeX in JSON: double every backslash in TeX (e.g. \\\\text, \\\\times, \\\\frac) or JSON will corrupt commands.\n" +
         "\n" +
+        "String contract (all human-readable fields):\n" +
         LLM_NO_MARKDOWN_IN_STRINGS +
-        '\n\nReturn one JSON object with exactly these keys: topic_category, criterion, text, expected_answer, success_criteria, ideal_explanation, plotly_spec, type. No markdown, no code fences.'
+        "\n\nOutput only the JSON object — no markdown, no code fences, no commentary."
     );
 }
- async function fetchQuestionViaDashScope(dashscopeKey, basePrompt) {
+ async function fetchQuestionViaDashScope(dashscopeKey, basePrompt, pedagogy = null) {
     const url = dashscopeChatCompletionsUrl();
     const { dsModel } = getConfiguredAiKeys();
     const headers = {
@@ -1694,15 +2126,13 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     const systemMsg = {
         role: "system",
         content:
-            "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. " +
-            "Treat output as two layers: (1) rigid JSON shape, keys, LaTeX-in-JSON escaping, and plotly_spec rules — must be perfect for the app; (2) story, taunt, and scenario — be original and engaging within MYP constraints. Never sacrifice (1) for (2). " +
-            "The battle UI does not render Markdown: never put pipe tables, # headings, **, backticks, or HTML in text fields — plain sentences; tabular data as labeled lines (e.g. Day 1: 5 laps). Math only as $...$, never $$...$$. " +
-            LLM_NO_MARKDOWN_IN_STRINGS +
-            " For word problems with objects (marbles, apples, bags) or addition/subtraction stories, always include a non-empty plotly_spec with numeric Plotly data (number line or bars) — never leave plotly_spec empty for those."
+            "You output exactly one valid JSON object. No markdown fences, no commentary. Double-quoted strings only. " +
+            "Priority: (1) HARD REQUIREMENTS and string contract in the user message — keys, types, plotly_spec, escaping; (2) engaging MYP story second. Never break (1) for (2). " +
+            "Honor the user’s topic_category, criterion, speaker/addressee names, strand shape, unit ledger, and chart rules. " +
+            "Quantity/object word problems need non-empty plotly_spec with numeric Plotly data (see user)."
     };
     const questionBackoff = { min429DelayMs: 3500, maxDelayMs: 22000, initialDelayMs: 1000 };
     const fetchQuestionRaw = async (userContent) => {
-        debugLogAiPrompt("dashscope.user", userContent);
         const messages = [systemMsg, { role: "user", content: userContent }];
         const bodyWithJson = JSON.stringify({
             model: dsModel,
@@ -1732,7 +2162,9 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
         if (data && data.error) {
             throw new Error(data.error.message || JSON.stringify(data.error));
         }
-        return data?.choices?.[0]?.message?.content;
+        const content = data?.choices?.[0]?.message?.content;
+        logCombatQuestionLlmExchange(systemMsg.content, userContent, content);
+        return content;
     };
     const parseFinalizeCombat = (content) => {
         const pv = parseAndValidate(CombatQuestionSchema, content, { lenient: true });
@@ -1803,13 +2235,14 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
             throw new Error("DashScope returned empty/invalid plotly_spec for a quantity story (chart required)");
         }
     }
+    applyPedagogyLabelsToCombatQuestion(parsed, pedagogy);
     return Object.assign(parsed, { _questionSource: "dashscope", _dashscopeModel: dsModel });
 }
  function getPrefetchTimeoutMs() {
-    // Debug/testing: allow bumping timeout without editing code.
-    // - query: ?aiTimeoutMs=45000
-    // - config: window.__prefetch_ai_timeout_ms = 45000
-    let ms = 28000;
+    // One combat question can trigger several HTTP calls (validate retry, dup, chart); allow enough wall time.
+    // - query: ?aiTimeoutMs=90000
+    // - config: window.__prefetch_ai_timeout_ms = 90000
+    let ms = 65000;
     try {
         const qs = new URLSearchParams(location.search);
         const v = qs.get("aiTimeoutMs");
@@ -1825,21 +2258,39 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     } catch (_) {}
     return ms;
 }
- async function prefetchQuestion() {
-    if (fetchPromise) return fetchPromise;
-     fetchPromise = (async () => {
-        prefetchInFlight = true;
+ async function prefetchQuestion(levelOverride) {
+    const targetLevel =
+        Number.isFinite(levelOverride) && levelOverride >= 1
+            ? Math.floor(levelOverride)
+            : state.currentLevel;
+    if (fetchPromise && prefetchPromiseForLevel === targetLevel) return fetchPromise;
+    const runId = ++prefetchRunId;
+    const levelWhenScheduled = targetLevel;
+    prefetchPromiseForLevel = levelWhenScheduled;
+    fetchPromise = (async () => {
+        prefetchInFlightCount += 1;
+        prefetchInFlight = prefetchInFlightCount > 0;
         syncMapQuestionBufferHint();
         syncQuestionsApiBadge();
-        const prompt = buildMathQuestionPrompt();
+        const built = buildMathQuestionPrompt(levelWhenScheduled);
         const { dsKey } = getConfiguredAiKeys();
         const cancelLateAi = { cancelled: false };
-         try {
+        const assignIfStillRelevant = (q, allowAfterCatch = false) => {
+            if (!q) return;
+            if (runId !== prefetchRunId) return;
+            if (!allowAfterCatch && cancelLateAi.cancelled) return;
+            q._prefetchForLevel = levelWhenScheduled;
+            state.nextQuestion = q;
+        };
+        try {
             await raceWithPrefetchTimeout(
                 (async () => {
                     if (!dsKey) throw new Error("no DashScope API key configured");
-                    const q = await fetchQuestionViaDashScope(dsKey, prompt);
-                    if (!cancelLateAi.cancelled) state.nextQuestion = q;
+                    const q = await fetchQuestionViaDashScope(dsKey, built.prompt, {
+                        chosenTopic: built.chosenTopic,
+                        targetCriterion: built.targetCriterion
+                    });
+                    assignIfStillRelevant(q);
                 })(),
                 getPrefetchTimeoutMs()
             );
@@ -1847,10 +2298,15 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
             cancelLateAi.cancelled = true;
             console.error("prefetchQuestion (live AI failed, using offline pool):", e);
             setPrefetchFailureFromError(e);
-            state.nextQuestion = pickFallbackQuestion(state.activeQuestion?.text);
+            const fb = pickFallbackQuestion(state.activeQuestion?.text);
+            assignIfStillRelevant(fb, true);
         } finally {
-            prefetchInFlight = false;
-            fetchPromise = null;
+            prefetchInFlightCount = Math.max(0, prefetchInFlightCount - 1);
+            prefetchInFlight = prefetchInFlightCount > 0;
+            if (runId === prefetchRunId) {
+                fetchPromise = null;
+                prefetchPromiseForLevel = null;
+            }
             syncAiRouteNotice();
             syncMapQuestionBufferHint();
             syncQuestionsApiBadge();
@@ -1859,7 +2315,13 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     return fetchPromise;
 }
  async function startGame(level) {
+    closeAllMapHudOverlays();
     state.currentLevel = level;
+    if (state.nextQuestion) {
+        const pl = state.nextQuestion._prefetchForLevel;
+        if (pl !== undefined && pl !== level) state.nextQuestion = null;
+        else if (pl === undefined && level !== 1) state.nextQuestion = null;
+    }
     state.playerHP = 100; state.enemyHP = 100;
     clearBattleDamageOverlay();
     state.comboCount = 0;
@@ -1868,6 +2330,7 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     state.forceEasierNextQuestion = false;
     state.nextEnemyAttackZero = false;
     state.requireReflection = false;
+    state._battleParticipation = { firstCastDone: false, reflectionDone: false };
     const combo = document.getElementById("combo-badge");
     if (combo) combo.classList.add("hidden");
     if (level > QUEST_ROUTE.length) {
@@ -2045,13 +2508,13 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
         "- answer: must exactly match one element of options.\n" +
         '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes.\n' +
         "- ideal_explanation: 3–6 short sentences, clear steps.\n" +
-        '- "text" and ideal_explanation: plain English only — no pipe tables, # headings, **, backticks, or ```; math as $...$ only (no $$). Lists: lines starting with "- ".\n' +
+        '- "text" and ideal_explanation: plain English only — no pipe tables, # headings, **, backticks, or ```; math as \\(...\\) only (no $$; no single-dollar math wraps). Lists: lines starting with "- ".\n' +
         "\n" +
         LLM_NO_MARKDOWN_IN_STRINGS +
         "\n\nReturn one JSON object with exactly these keys: topic_category, text, answer, ideal_explanation, plotly_spec, type, options. No markdown, no code fences."
     );
 }
- async function fetchPracticeMcqViaDashScope() {
+ async function fetchPracticeMcqViaDashScope({ previousStem = "" } = {}) {
     const { dsKey, dsModel } = getConfiguredAiKeys();
     if (!dsKey) throw new Error("no DashScope API key configured");
     const url = dashscopeChatCompletionsUrl();
@@ -2064,9 +2527,20 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     };
     const diff = state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8");
     const seed = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const ctxIdx = pickSeededIndex(seed, "practice_mcq_ctx", MATH_BATTLE_CONTEXT_SEEDS.length);
+    const contextHook = MATH_BATTLE_CONTEXT_SEEDS[ctxIdx];
+    const topicIdx = pickSeededIndex(seed, "practice_mcq_topic", GENERATED_BOSS_TOPICS.length);
+    const topicHint = GENERATED_BOSS_TOPICS[topicIdx];
+    const prev = String(previousStem || "").trim();
+    const avoidRepeat =
+        prev.length > 0
+            ? `\n\nMANDATORY variety: The player just saw this stem — you must NOT repeat it.\nPrior stem (do not reuse scenario, numbers, or answer structure):\n${prev.length > 450 ? `${prev.slice(0, 450)}…` : prev}\nInvent a clearly different problem (new numbers, new context). Change topic if needed; suggested strand was ${topicHint} but any MYP Year 7–8 topic is fine.`
+            : "";
     const basePrompt =
         `[SEED:${seed}] Generate one unique ${diff} IB MYP Year 7/8 practice MCQ (warm-up). ` +
-        `Keep it short and solvable quickly. Return JSON only. Use LaTeX for math.`;
+        `Loose context inspiration: ${contextHook}. Suggested strand: ${topicHint}. ` +
+        `Keep it short and solvable quickly. Return JSON only. Use LaTeX for math.` +
+        avoidRepeat;
     const postPractice = async (suffix) => {
         const userContent = basePrompt + dashScopePracticeMcqSuffix() + suffix;
         debugLogAiPrompt("dashscope.practice", userContent);
@@ -2074,7 +2548,7 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
             model: dsModel,
             messages: [systemMsg, { role: "user", content: userContent }],
             response_format: { type: "json_object" },
-            temperature: 0.7,
+            temperature: 0.88,
             max_tokens: 800
         });
         const res = await fetchWithBackoff(url, { method: "POST", headers, body }, 3, {
@@ -2290,8 +2764,8 @@ const GENERATED_BOSS_TOPICS = [
         bossGenInFlight.delete(level);
     }
 }
- let practiceActiveQuestion = null;
 window.openPracticeMode = async () => {
+    closeOtherMapHudOverlays("practice");
     document.getElementById("practice-overlay")?.classList.remove("hidden");
     await nextPracticeQuestion();
 };
@@ -2300,15 +2774,29 @@ window.closePracticeMode = () => {
     practiceActiveQuestion = null;
 };
 window.nextPracticeQuestion = async () => {
+    const myGen = ++practiceMcqFetchGeneration;
+    const prevStem = practiceActiveQuestion?.text ? String(practiceActiveQuestion.text) : "";
     const qEl = document.getElementById("practice-question-text");
     const grid = document.getElementById("practice-mcq-grid");
     const fb = document.getElementById("practice-feedback");
+    const nextBtn = document.getElementById("practice-next-btn");
     if (fb) fb.innerText = "";
     if (grid) grid.innerHTML = "";
-    if (qEl) qEl.innerText = "Summoning a practice question...";
+    if (qEl) {
+        if (window.MathJax?.typesetClear) MathJax.typesetClear([qEl]);
+        qEl.innerText = "Summoning a practice question...";
+    }
+    if (nextBtn) nextBtn.disabled = true;
     try {
-        const q = await fetchPracticeMcqViaDashScope();
+        const q = await fetchPracticeMcqViaDashScope({ previousStem: prevStem });
+        if (myGen !== practiceMcqFetchGeneration) return;
         practiceActiveQuestion = q;
+        const pAmt = grantPracticeParticipationIfAllowed();
+        if (pAmt > 0) {
+            grantParticipationShards(pAmt, `+${pAmt} shard${pAmt === 1 ? "" : "s"} — practice stipend`);
+            if (state.playerName) saveLocalProfile(state.playerName);
+            void syncCurrentProfileToCloud();
+        }
         if (qEl) qEl.innerHTML = proseWithMathToHtml(q.text);
         if (window.MathJax) MathJax.typesetPromise([qEl]);
         if (grid) {
@@ -2317,7 +2805,7 @@ window.nextPracticeQuestion = async () => {
                 const oStr = opt.toString();
                 const isMath = oStr.includes("^") || oStr.includes("\\");
                 const esc = escapeHtmlText(oStr);
-                b.innerHTML = `<span>${isMath ? `$${esc}$` : esc}</span>`;
+                b.innerHTML = `<span>${isMath ? `\\(${esc}\\)` : esc}</span>`;
                 b.className =
                     "bg-slate-800 hover:bg-slate-700 p-4 rounded-lg font-bold border-2 border-slate-600 transition-all text-sm min-h-[3rem]";
                 b.onclick = () => {
@@ -2330,8 +2818,11 @@ window.nextPracticeQuestion = async () => {
             if (window.MathJax) MathJax.typesetPromise([grid]);
         }
     } catch (e) {
+        if (myGen !== practiceMcqFetchGeneration) return;
         if (qEl) qEl.innerText = "Practice AI failed — try again.";
         console.error("practice MCQ failed:", e);
+    } finally {
+        if (myGen === practiceMcqFetchGeneration && nextBtn) nextBtn.disabled = false;
     }
 };
  window.handleInputAttack = async (e) => {
@@ -2348,6 +2839,13 @@ window.nextPracticeQuestion = async () => {
         state.isAnimating = false;
         showDetailedFeedback("To score higher, you must write your reasoning (2–5 steps). Try again.");
         return;
+    }
+    if (!state._battleParticipation) state._battleParticipation = { firstCastDone: false, reflectionDone: false };
+    if (!state._battleParticipation.firstCastDone) {
+        state._battleParticipation.firstCastDone = true;
+        grantParticipationShards(EP_SHARD_FIRST_CAST, `+${EP_SHARD_FIRST_CAST} shards — nice, you showed your work!`);
+        if (state.playerName) saveLocalProfile(state.playerName);
+        void syncCurrentProfileToCloud();
     }
      const bS = document.getElementById("battle-screen");
     const fb = document.getElementById("combat-feedback");
@@ -2476,33 +2974,55 @@ window.nextPracticeQuestion = async () => {
     }
 };
  function finishBattle(win) {
-    if (win) {
-        const gain = 15 + Math.min(40, Math.floor(state.currentLevel / 2));
-        state.shards = Math.max(0, Math.floor(state.shards || 0) + gain);
-        addBossToBestiary(state.currentLevel);
-        syncShardsUi();
-        if (state.playerName) saveLocalProfile(state.playerName);
+    const victoryGain = 15 + Math.min(40, Math.floor(state.currentLevel / 2));
+    const extraLines = [];
+    let participationExtra = 0;
+    if (!win) {
+        participationExtra += EP_SHARD_LOSS_BATTLE;
+        extraLines.push(`Training stipend +${EP_SHARD_LOSS_BATTLE} Logic Shards — finishing counts as practice.`);
     }
-    if (win && state.currentLevel === state.unlockedLevels) {
-        state.unlockedLevels++;
-        if (state.playerName) saveLocalProfile(state.playerName);
+    const dqShards = tryGrantDailyQuestBattleBonus();
+    if (dqShards > 0) {
+        participationExtra += dqShards;
+        extraLines.push(`Daily quest complete — +${dqShards} bonus shards for battling today.`);
+    }
+    if (participationExtra > 0) {
+        state.shards = Math.max(0, Math.floor(state.shards || 0) + participationExtra);
+        syncShardsUi();
+    }
+    if (win) {
+        state.shards = Math.max(0, Math.floor(state.shards || 0) + victoryGain);
+        addBossToBestiary(state.currentLevel);
+        if (state.currentLevel === state.unlockedLevels) {
+            state.unlockedLevels++;
+        }
+        ensureBestiaryMatchesUnlockedLevels();
+        grantProgressFlairsFromState();
+        syncShardsUi();
+        if (state.playerName) {
+            saveLocalProfile(state.playerName);
+            syncCurrentProfileToCloud();
+        }
+    } else if (participationExtra > 0 && state.playerName) {
+        saveLocalProfile(state.playerName);
         syncCurrentProfileToCloud();
     }
     document.getElementById('result-overlay').classList.remove('hidden');
-    safeSet('result-title', win ? 'VICTORY' : 'DEFEATED');
-    safeSet(
-        'result-desc',
-        win
-            ? `The creature has been banished. +${15 + Math.min(40, Math.floor(state.currentLevel / 2))} Logic Shards.`
-            : 'Retreat to the academy to study.'
-    );
+    safeSet('result-title', win ? 'VICTORY' : 'KEEP TRAINING');
+    let desc = win
+        ? `The creature has been banished. +${victoryGain} Logic Shards.`
+        : "Every champion studies after a tough fight. Mistakes are data — read the solution, then try again.";
+    if (extraLines.length) desc += `\n\n${extraLines.join("\n")}`;
+    safeSet('result-desc', desc);
 }
  window.returnToMenu = () => {
     document.getElementById('result-overlay').classList.add('hidden');
+    closeAllMapHudOverlays();
     document.getElementById('battle-screen').classList.add('hidden');
     document.getElementById('level-screen').classList.remove('hidden');
     state.isAnimating = false;
     syncShardsUi();
+    syncEngagementHud();
     renderLevelMenu();
     syncCurrentProfileToCloud();
 };
@@ -2512,8 +3032,16 @@ window.closeDetailedFeedback = async () => {
         if (typeof Plotly !== "undefined") Plotly.purge(plotEl);
         plotEl.classList.add("hidden");
     }
+    const neededReflection = state.requireReflection;
     if (state.requireReflection) {
+        if (!state._battleParticipation) state._battleParticipation = { firstCastDone: false, reflectionDone: false };
         const reflect = String(document.getElementById("reflection-input")?.value || "").trim();
+        if (reflect.length >= 10 && neededReflection && !state._battleParticipation.reflectionDone) {
+            state._battleParticipation.reflectionDone = true;
+            grantParticipationShards(EP_SHARD_REFLECTION, `+${EP_SHARD_REFLECTION} shards — strong reflection!`);
+            if (state.playerName) saveLocalProfile(state.playerName);
+            void syncCurrentProfileToCloud();
+        }
         if (reflect.length >= 10) {
             try {
                 const parry = await (async () => {
@@ -2525,7 +3053,7 @@ window.closeDetailedFeedback = async () => {
                         role: "system",
                         content:
                             "You output exactly one valid JSON object and nothing else. No markdown, no code fences. Use double quotes for JSON strings. " +
-                            "note must be one plain sentence; math only as $...$ if needed. " +
+                            "note must be one plain sentence; math only as \\(...\\) if needed. " +
                             LLM_NO_MARKDOWN_IN_STRINGS
                     };
                     const q = state.activeQuestion || {};
@@ -2587,6 +3115,22 @@ window.closeDetailedFeedback = async () => {
     syncCurrentProfileToCloud();
 };
  document.getElementById("cloud-sync-badge")?.addEventListener("click", () => requestUserSync());
+/** Map screen: wire HUD buttons here so clicks work without relying on inline handlers (CSP / scope). */
+function wireMapHudButtons() {
+    document.getElementById("map-btn-bestiary")?.addEventListener("click", () => {
+        window.openBestiary();
+    });
+    document.getElementById("map-btn-upgrades")?.addEventListener("click", () => {
+        window.openUpgrades();
+    });
+    document.getElementById("map-btn-practice")?.addEventListener("click", () => {
+        void window.openPracticeMode();
+    });
+    document.getElementById("map-btn-logout")?.addEventListener("click", () => {
+        location.reload();
+    });
+}
+wireMapHudButtons();
  loadRecentStems();
 state.bossCacheByLevel = loadBossCache();
 runRegressions();

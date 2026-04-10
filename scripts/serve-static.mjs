@@ -26,8 +26,15 @@ const MIME = {
     ".webp": "image/webp"
 };
 
+/**
+ * Merge repo-root `.env` into process.env.
+ * - Fills missing keys.
+ * - Also fills when process.env has an empty string (common gotcha: `export DASHSCOPE_API_KEY=`
+ *   blocks .env forever if we skip "defined" keys — breaks after refresh vs first load).
+ * Re-read on each call so `npm run serve` picks up .env edits without restart and stays
+ * consistent for every `/runtime-config.js` request (hard refresh).
+ */
 function loadRootDotEnvIntoProcessEnv() {
-    // Lightweight dotenv: KEY=value per line, no override of existing process.env.
     try {
         const p = path.join(ROOT, ".env");
         if (!fs.existsSync(p)) return;
@@ -38,7 +45,9 @@ function loadRootDotEnvIntoProcessEnv() {
             const m = t.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
             if (!m) continue;
             const key = m[1];
-            if (process.env[key] !== undefined) continue;
+            const cur = process.env[key];
+            const curEmpty = cur === undefined || String(cur).trim() === "";
+            if (!curEmpty) continue;
             let v = m[2].trim();
             if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
                 v = v.slice(1, -1);
@@ -108,8 +117,6 @@ function resolvePath(urlPath) {
     return full;
 }
 
-loadRootDotEnvIntoProcessEnv();
-
 const server = http.createServer((req, res) => {
     if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405).end();
@@ -123,6 +130,7 @@ const server = http.createServer((req, res) => {
         return;
     }
     if (pathname === "/runtime-config.js") {
+        loadRootDotEnvIntoProcessEnv();
         res.setHeader("Content-Type", MIME[".js"]);
         res.setHeader("Cache-Control", "no-store");
         if (req.method === "HEAD") {
@@ -146,6 +154,9 @@ const server = http.createServer((req, res) => {
         }
         const ext = path.extname(filePath).toLowerCase();
         res.setHeader("Content-Type", MIME[ext] || "application/octet-stream");
+        if (ext === ".html") {
+            res.setHeader("Cache-Control", "no-store, must-revalidate");
+        }
         if (req.method === "HEAD") {
             res.writeHead(200).end();
             return;

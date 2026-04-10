@@ -1,0 +1,159 @@
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
+.animate-shake { animation: shake 0.4s ease-in-out; }
+@keyframes attack-p { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-40px); } }
+.animate-attack-p { animation: attack-p 0.3s ease-in-out; }
+@keyframes attack-e { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(40px); } }
+.animate-attack-e { animation: attack-e 0.3s ease-in-out; }
+@keyframes breathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(0.965); } }
+.enemy-breathe { animation: breathe 2.4s ease-in-out infinite; transform-origin: 50% 80%; }
+@keyframes lowhp { 0%, 100% { filter: saturate(1) drop-shadow(0 0 12px rgba(239,68,68,0.25)); } 50% { filter: saturate(1.4) drop-shadow(0 0 18px rgba(239,68,68,0.65)); } }
+.enemy-lowhp { animation: breathe 1.4s ease-in-out infinite, lowhp 0.8s ease-in-out infinite; }
+.health-fill { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+.h-dvh { height: 100dvh; }
+/* Plotly fills this box; keeps charts inside the solution modal */
+#plot-container:not(.hidden) {
+    width: 100%;
+    max-width: 100%;
+    height: min(38vh, 280px);
+    max-height: min(38vh, 280px);
+    min-height: 0;
+    overflow: hidden;
+}
+@keyframes quest-glow { 0%, 100% { filter: drop-shadow(0 0 6px rgba(250, 204, 21, 0.9)); } 50% { filter: drop-shadow(0 0 14px rgba(250, 204, 21, 1)); } }
+.quest-node-current { animation: quest-glow 2.2s ease-in-out infinite; }
+.quest-map-wrap { min-height: 0; }
+#cloud-sync-badge:not(.hidden) { pointer-events: auto; }
+#ai-questions-status { pointer-events: none; }
+
+/* Map HUD modals: must sit above #level-screen (z-50). Tailwind z-[250]/z-[260] only exist after `npm run build:css`; this keeps modals usable if CSS is stale. */
+#bestiary-overlay,
+#upgrades-overlay,
+#practice-overlay {
+    z-index: 280;
+}
+
+/* Legacy: LLM pipe tables are now flattened to plain lines; class kept for any cached HTML */
+#question-text .mb-qtable,
+#practice-question-text .mb-qtable,
+#personalized-feedback .mb-qtable,
+#ideal-explanation .mb-qtable {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+    font-size: 0.875rem;
+}
+.mb-qtable th,
+.mb-qtable td {
+    border: 1px solid #64748b;
+    padding: 0.35rem 0.5rem;
+    text-align: center;
+}
+.mb-qtable th {
+    background: rgba(30, 41, 59, 0.85);
+    font-weight: 800;
+}
+
+/* Map shard total: spacing between label and number even if Tailwind gap is missing from build */
+.map-shards-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.map-shards-pill #shards-count {
+    font-variant-numeric: tabular-nums;
+    min-width: 1.25em;
+}
+
+/* Earned title badges (map HUD): real spacing + icon + pill — not dependent on Tailwind purge */
+.player-flair-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: min(100%, 36rem);
+}
+.flair-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.55rem 0.2rem 0.4rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(251, 191, 36, 0.5);
+    background: linear-gradient(155deg, rgba(35, 28, 8, 0.98), rgba(67, 48, 6, 0.92));
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 2px 10px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    font-size: 0.5625rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff7ed;
+    line-height: 1.25;
+    vertical-align: middle;
+}
+.flair-badge-icon {
+    flex-shrink: 0;
+    display: block;
+    filter: drop-shadow(0 0 5px rgba(251, 191, 36, 0.35));
+}
+.flair-badge-label {
+    white-space: nowrap;
+    max-width: 10.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.flair-badge--gold {
+    border-color: rgba(251, 191, 36, 0.55);
+    color: #fffbeb;
+}
+.flair-badge--steel {
+    border-color: rgba(148, 163, 184, 0.55);
+    background: linear-gradient(155deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.92));
+    color: #e2e8f0;
+}
+.flair-badge--steel .flair-badge-icon {
+    filter: drop-shadow(0 0 4px rgba(148, 163, 184, 0.45));
+}
+.flair-badge--forest {
+    border-color: rgba(52, 211, 153, 0.45);
+    background: linear-gradient(155deg, rgba(6, 40, 27, 0.96), rgba(15, 60, 42, 0.92));
+    color: #d1fae5;
+}
+.flair-badge--forest .flair-badge-icon {
+    filter: drop-shadow(0 0 4px rgba(52, 211, 153, 0.35));
+}
+.flair-badge--ember {
+    border-color: rgba(251, 146, 60, 0.55);
+    background: linear-gradient(155deg, rgba(55, 22, 6, 0.96), rgba(90, 30, 10, 0.92));
+    color: #ffedd5;
+}
+.flair-badge--ember .flair-badge-icon {
+    filter: drop-shadow(0 0 5px rgba(251, 146, 60, 0.45));
+}
+.flair-badge--crystal {
+    border-color: rgba(56, 189, 248, 0.5);
+    background: linear-gradient(155deg, rgba(8, 30, 50, 0.96), rgba(12, 55, 80, 0.92));
+    color: #e0f2fe;
+}
+.flair-badge--crystal .flair-badge-icon {
+    filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.4));
+}
+.flair-badge--arcane {
+    border-color: rgba(167, 139, 250, 0.5);
+    background: linear-gradient(155deg, rgba(35, 20, 60, 0.96), rgba(55, 30, 85, 0.92));
+    color: #ede9fe;
+}
+.flair-badge--arcane .flair-badge-icon {
+    filter: drop-shadow(0 0 5px rgba(167, 139, 250, 0.4));
+}
+.flair-badge--mint {
+    border-color: rgba(52, 211, 153, 0.4);
+    background: linear-gradient(155deg, rgba(10, 40, 35, 0.96), rgba(15, 55, 48, 0.9));
+    color: #ecfdf5;
+}
+.flair-badge--mint .flair-badge-icon {
+    filter: drop-shadow(0 0 4px rgba(45, 212, 191, 0.35));
+}
