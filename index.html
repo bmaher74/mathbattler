@@ -6,7 +6,10 @@
     <title>Math Creature Battler</title>
     <!-- Cloud save: copy firebase-config.sample.js → firebase-config.js and fill in Firebase Console config -->
     <script src="firebase-config.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Optional live AI: Alibaba DashScope (Qwen) only — see ai-config.sample.js -->
+    <script src="ai-config.js"></script>
+    <!-- Built with: npm run build:css (see tailwind.input.css). Avoid cdn.tailwindcss.com in production. -->
+    <link rel="stylesheet" href="tailwind.css" />
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <script>window.MathJax = { tex: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] } };</script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
@@ -34,6 +37,7 @@
         .quest-node-current { animation: quest-glow 2.2s ease-in-out infinite; }
         .quest-map-wrap { min-height: 0; }
         #cloud-sync-badge:not(.hidden) { pointer-events: auto; }
+        #ai-questions-status { pointer-events: none; }
     </style>
 </head>
 <body class="bg-gray-900 text-white font-sans h-dvh w-screen overflow-hidden flex flex-col">
@@ -47,6 +51,7 @@
             <span id="t-vault">Vault: Wait</span>
             <span id="t-scroll">Scroll: Wait</span>
             <span id="t-brendan">Brendan: Wait</span>
+            <span id="t-ai">AI: Wait</span>
         </div>
     </div>
 
@@ -69,6 +74,13 @@
         </span>
     </button>
 
+    <div id="ai-questions-status" class="fixed right-2 sm:right-3 top-12 sm:top-14 z-[119] max-w-[min(100vw-1rem,15rem)] rounded-lg border border-slate-600/90 bg-slate-900/95 px-2.5 py-1.5 shadow-lg backdrop-blur-sm" title="" aria-live="polite">
+        <span class="flex flex-col leading-tight min-w-0">
+            <span class="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide text-slate-500">Questions</span>
+            <span id="ai-status-line2" class="text-[10px] sm:text-xs font-bold text-slate-200 truncate">Checking…</span>
+        </span>
+    </div>
+
     <div id="level-screen" class="hidden absolute inset-0 z-50 flex flex-col bg-slate-950 pt-14 sm:pt-16 min-h-0">
         <div class="shrink-0 flex justify-between items-center gap-3 px-4 sm:px-6 w-full max-w-4xl mx-auto pb-3">
             <div class="bg-slate-900/90 border-2 border-indigo-500/80 px-3 sm:px-4 py-2 rounded-full font-bold text-sm sm:text-base shadow-lg shadow-indigo-900/40">
@@ -79,6 +91,8 @@
         <div class="shrink-0 px-4 sm:px-6 pt-2 pb-4 text-center max-w-xl mx-auto w-full border-b border-slate-800/80 bg-slate-950/50">
             <h2 class="text-2xl sm:text-3xl font-black text-amber-200 tracking-tight drop-shadow-[0_0_12px_rgba(253,230,138,0.35)]">Math Quest</h2>
             <p class="text-slate-400 text-sm sm:text-base mt-2 leading-snug px-2">Start at level 1 above. Higher levels lie further down the path.</p>
+            <p id="ai-route-notice" class="hidden mt-2 mx-auto max-w-lg text-[12px] sm:text-sm text-amber-200/95 bg-amber-950/50 border border-amber-700/60 rounded-lg px-3 py-2 leading-snug" role="status"></p>
+            <p id="map-question-buffer-hint" class="text-[11px] text-slate-500 mt-1 px-2" aria-live="polite"></p>
         </div>
         <div class="quest-map-wrap flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar px-2 sm:px-4 pb-8 flex justify-center min-h-0">
             <div id="levels-container" class="w-full max-w-lg sm:max-w-xl py-3"></div>
@@ -109,6 +123,7 @@
         </div>
         <!-- INTERACTION PANEL (LOCKED HEIGHT) -->
         <div id="interaction-panel" class="shrink-0 h-[45%] bg-gray-900 border-t-4 border-gray-700 flex flex-col p-4">
+            <div id="question-source-badge" class="hidden mb-2 text-center text-xs font-bold uppercase tracking-wide text-amber-300 border border-amber-600/60 bg-amber-950/40 rounded-lg py-1.5 px-2" title=""></div>
             <div id="question-text" class="text-lg sm:text-xl font-bold text-yellow-300 text-center mb-4 min-h-[3rem]"></div>
             <div id="action-area" class="flex-1 overflow-y-auto custom-scrollbar">
                 <div id="mcq-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-8"></div>
@@ -222,10 +237,64 @@
             return portraits[i];
         }
 
+        /** Full battle sprite — matches map node identity (not just slime/golem parity). */
+        function battleBossSvgMarkup(level) {
+            const inner = mapBossPortrait(level);
+            return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="w-full h-full drop-shadow-[0_0_22px_rgba(148,163,184,0.45)]">${inner}</svg>`;
+        }
+
+        function clearBattleDamageOverlay() {
+            ["enemy-damage", "player-damage"].forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.innerText = "";
+                el.classList.remove("animate-damage");
+            });
+        }
+
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'math-adventure-global';
-        const state = { playerName: null, unlockedLevels: 1, currentLevel: 1, playerHP: 100, enemyHP: 100, isAnimating: false, skillProfile: null, nextQuestion: null, activeQuestion: null, lastCloudSyncAt: null, cloudSyncError: null };
+        const state = {
+            playerName: null,
+            unlockedLevels: 1,
+            currentLevel: 1,
+            playerHP: 100,
+            enemyHP: 100,
+            isAnimating: false,
+            skillProfile: null,
+            nextQuestion: null,
+            activeQuestion: null,
+            lastCloudSyncAt: null,
+            cloudSyncError: null,
+            /** Set when live AI prefetch fails — shown on map banner */
+            aiOfflineHint: null,
+            /** Short technical detail for tooltips / buffer line (e.g. HTTP 429) */
+            lastPrefetchError: null
+        };
+        /** Set by runAiApiRegression (page load) before login; used by the Questions status chip. */
+        let lastAiConnectivityCheck = { ok: null, summary: "", detail: "" };
         let cloudSyncManualInFlight = false;
-        const apiKey = "";
+        function readConfigString(v) {
+            if (v == null) return "";
+            const s = typeof v === "string" ? v : String(v);
+            return s.trim();
+        }
+
+        function getConfiguredAiKeys() {
+            const dsKey = readConfigString(typeof window !== "undefined" ? window.__dashscope_api_key : "");
+            const dsBase =
+                readConfigString(typeof window !== "undefined" ? window.__dashscope_base_url : "") ||
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+            const dsModel = readConfigString(typeof window !== "undefined" ? window.__dashscope_model : "") || "qwen-flash";
+            const dsChatUrl = readConfigString(typeof window !== "undefined" ? window.__dashscope_chat_completions_url : "");
+            return { dsKey, dsBase, dsModel, dsChatUrl };
+        }
+
+        function dashscopeChatCompletionsUrl() {
+            const { dsBase, dsChatUrl } = getConfiguredAiKeys();
+            if (dsChatUrl) return dsChatUrl;
+            return dsBase.replace(/\/$/, "") + "/chat/completions";
+        }
+
         let db, auth, currentUser, isFirebaseReady = false;
         let loginGateResolved = false;
 
@@ -482,7 +551,11 @@
             saveLocalProfile(name);
             await persistMergedProfileToCloud(name, merged);
             const ls = document.getElementById("level-screen");
-            if (ls && !ls.classList.contains("hidden")) renderLevelMenu();
+            if (ls && !ls.classList.contains("hidden")) {
+                renderLevelMenu();
+                syncAiRouteNotice();
+                syncMapQuestionBufferHint();
+            }
         }
 
         let cloudSyncIntervalId = null;
@@ -564,6 +637,8 @@
             const scrollOk = panel && window.getComputedStyle(panel).flexShrink === '0';
             safeSet('t-scroll', scrollOk ? 'SCROLL: PASS' : 'SCROLL: FAIL');
             document.getElementById('t-scroll').className = scrollOk ? "text-green-400" : "text-red-400";
+
+            await runAiApiRegression();
         }
 
         async function connectFirebaseAndSeedRegression() {
@@ -670,11 +745,232 @@
             document.getElementById('level-screen').classList.remove('hidden');
             safeSet('player-sprite', ASSETS.wizard, 'innerHTML');
             renderLevelMenu();
+            syncAiRouteNotice();
+            syncMapQuestionBufferHint();
             prefetchQuestion(); // Non-blocking: Fetches in the background while the user views the map
             showCloudSyncBadge();
+            syncQuestionsApiBadge();
             startCloudSyncHeartbeat();
             void syncCurrentProfileToCloud();
         };
+
+        let fetchPromise = null;
+        let prefetchInFlight = false;
+
+        function clearPrefetchFailureUi() {
+            state.aiOfflineHint = null;
+            state.lastPrefetchError = null;
+        }
+
+        function setPrefetchFailureFromError(e) {
+            const m = e && e.message ? String(e.message) : String(e);
+            state.lastPrefetchError = m.slice(0, 280);
+            const is429 = (e && e.isRateLimit) || /(^|\D)429(\D|$)|rate limit/i.test(state.lastPrefetchError);
+            if (is429) {
+                state.aiOfflineHint =
+                    "Live AI hit HTTP 429 (rate limit). Free models are often busy; this battle uses the offline pool until a request succeeds. " +
+                    state.lastPrefetchError;
+            } else if (/no AI API key|no DashScope API key/i.test(state.lastPrefetchError)) {
+                state.aiOfflineHint =
+                    "No DashScope key in ai-config.js — questions come from the built-in offline pool only.";
+            } else if (/PREFETCH_TIMEOUT|did not finish within|Live AI slow or stalled/i.test(state.lastPrefetchError)) {
+                state.aiOfflineHint =
+                    "Live AI took too long (rate limits or slow network). This battle uses the offline pool — check DashScope in ai-config.js or try again.";
+            } else if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(state.lastPrefetchError)) {
+                state.aiOfflineHint =
+                    (state.lastPrefetchError || "") +
+                    " If you use Alibaba DashScope from a static web page, the API often blocks browser CORS — use a small same-origin proxy and set window.__dashscope_chat_completions_url to your proxy URL.";
+            } else {
+                state.aiOfflineHint = "Live AI request failed — using the offline question pool. " + state.lastPrefetchError;
+            }
+        }
+
+        function syncAiRouteNotice() {
+            const el = document.getElementById("ai-route-notice");
+            if (!el) return;
+            if (state.aiOfflineHint) {
+                el.textContent = state.aiOfflineHint;
+                el.classList.remove("hidden");
+            } else {
+                el.textContent = "";
+                el.classList.add("hidden");
+            }
+        }
+
+        function syncMapQuestionBufferHint() {
+            const el = document.getElementById("map-question-buffer-hint");
+            if (!el) return;
+            const parts = [];
+            if (prefetchInFlight) parts.push("Fetching next question…");
+            if (state.nextQuestion) {
+                const src = state.nextQuestion._questionSource;
+                if (src === "offline") {
+                    parts.push("Queued: offline pool.");
+                    if (state.lastPrefetchError) parts.push(state.lastPrefetchError.slice(0, 140));
+                } else if (src === "dashscope") {
+                    parts.push("Queued: live AI (Alibaba DashScope / Qwen).");
+                } else if (src === "openrouter") {
+                    parts.push("Queued: live AI (legacy source).");
+                } else if (src === "gemini") {
+                    parts.push("Queued: legacy Gemini (removed in this build).");
+                } else {
+                    parts.push("Queued: next battle question ready.");
+                }
+            } else if (!prefetchInFlight) {
+                parts.push("No question prefetched yet.");
+            }
+            el.textContent = parts.join(" ");
+            el.className =
+                "text-[11px] mt-1 px-2 " +
+                (state.nextQuestion && state.nextQuestion._questionSource === "offline"
+                    ? "text-amber-400/90"
+                    : "text-slate-500");
+        }
+
+        function updateQuestionSourceBadge(q) {
+            const el = document.getElementById("question-source-badge");
+            if (!el) return;
+            if (!q) {
+                el.classList.add("hidden");
+                el.textContent = "";
+                el.title = "";
+                return;
+            }
+            const base = "mb-2 text-center text-xs font-bold uppercase tracking-wide rounded-lg py-1.5 px-2 border";
+            el.classList.remove("hidden");
+            const src = q._questionSource;
+            if (src === "offline") {
+                el.className = `${base} text-amber-300 border-amber-600/60 bg-amber-950/40`;
+                el.textContent = "This question · offline pool (not from live AI)";
+                el.title = state.lastPrefetchError || state.aiOfflineHint || "Built-in fallback questions.";
+            } else if (src === "dashscope") {
+                el.className = `${base} text-emerald-200 border-emerald-600/60 bg-emerald-950/40`;
+                const m = q._dashscopeModel ? String(q._dashscopeModel) : "Qwen";
+                el.textContent = `This question · live AI · DashScope (${m})`;
+                el.title = "This multiple-choice question was generated by DashScope for this battle.";
+            } else if (src === "gemini") {
+                el.className = `${base} text-slate-300 border-slate-500/60 bg-slate-900/80`;
+                el.textContent = "This question · legacy Gemini (no longer supported here)";
+                el.title = "Older session data; new questions use DashScope or offline only.";
+            } else if (src === "openrouter") {
+                el.className = `${base} text-slate-200 border-slate-500/60 bg-slate-900/80`;
+                el.textContent = "This question · live AI (legacy provider)";
+                el.title = "Older saved question source.";
+            } else {
+                el.classList.add("hidden");
+                el.textContent = "";
+                el.title = "";
+            }
+        }
+
+        function syncQuestionsApiBadge() {
+            const root = document.getElementById("ai-questions-status");
+            const l2 = document.getElementById("ai-status-line2");
+            if (!root || !l2) return;
+
+            const { dsKey, dsModel } = getConfiguredAiKeys();
+            const hasKey = !!dsKey;
+            const routeTitle = dsKey ? `DashScope: ${dsModel}` : "";
+
+            const isLiveSource = (q) =>
+                q && (q._questionSource === "dashscope" || q._questionSource === "openrouter" || q._questionSource === "gemini");
+            const queuedLive = isLiveSource(state.nextQuestion);
+            const activeLive = isLiveSource(state.activeQuestion);
+            const battleEl = document.getElementById("battle-screen");
+            const inBattle = !!(battleEl && !battleEl.classList.contains("hidden"));
+
+            const setStyle = (borderHue, line2Class) => {
+                root.className =
+                    `fixed right-2 sm:right-3 top-12 sm:top-14 z-[119] max-w-[min(100vw-1rem,15rem)] rounded-lg border px-2.5 py-1.5 shadow-lg backdrop-blur-sm ${borderHue}`;
+                l2.className = `text-[10px] sm:text-xs font-bold truncate ${line2Class}`;
+            };
+
+            if (state.playerName) {
+                if (inBattle && state.activeQuestion) {
+                    const aq = state.activeQuestion;
+                    const pf = prefetchInFlight ? " · prefetch next…" : "";
+                    if (aq._questionSource === "offline") {
+                        setStyle("border-amber-600/80 bg-amber-950/40", "text-amber-200");
+                        l2.textContent = "This question · offline" + pf;
+                        root.title =
+                            (state.lastPrefetchError || state.aiOfflineHint || "Offline pool.") +
+                            " System AI: PASS is only a connectivity smoke ping, not proof this MCQ is live.";
+                        return;
+                    }
+                    if (aq._questionSource === "dashscope") {
+                        setStyle("border-emerald-500/70 bg-slate-900/95", "text-emerald-300");
+                        l2.textContent = "This question · DashScope" + pf;
+                        root.title = aq._dashscopeModel
+                            ? `Live MCQ · model ${aq._dashscopeModel}. Smoke test ≠ guarantee of every fetch.`
+                            : "Live MCQ from DashScope.";
+                        return;
+                    }
+                    if (aq._questionSource === "gemini") {
+                        setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
+                        l2.textContent = "This question · legacy Gemini" + pf;
+                        root.title = "Legacy only; configure DashScope for live questions in HK.";
+                        return;
+                    }
+                    if (aq._questionSource === "openrouter") {
+                        setStyle("border-emerald-500/70 bg-slate-900/95", "text-emerald-300");
+                        l2.textContent = "This question · live (legacy)" + pf;
+                        root.title = "Legacy live source.";
+                        return;
+                    }
+                }
+                if (prefetchInFlight) {
+                    setStyle("border-sky-500/70 bg-slate-900/95", "text-sky-300");
+                    l2.textContent = "Fetching from API…";
+                    root.title = hasKey ? `Request in progress (${routeTitle})` : "";
+                    return;
+                }
+                if (queuedLive || activeLive) {
+                    setStyle("border-emerald-500/70 bg-slate-900/95", "text-emerald-300");
+                    l2.textContent = "Next / last · live AI";
+                    const m = state.nextQuestion && state.nextQuestion._dashscopeModel;
+                    root.title = m ? `${routeTitle} (queued model: ${m})` : routeTitle;
+                    return;
+                }
+                if (!hasKey) {
+                    setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
+                    l2.textContent = "Offline only (no key)";
+                    root.title = "Add a key in ai-config.js to enable live questions.";
+                    return;
+                }
+                if (state.aiOfflineHint) {
+                    setStyle("border-amber-600/80 bg-amber-950/40", "text-amber-200");
+                    l2.textContent = "Using offline pool";
+                    root.title = state.lastPrefetchError || state.aiOfflineHint;
+                    return;
+                }
+                setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-300");
+                l2.textContent = lastAiConnectivityCheck.ok ? "Ready (no question queued)" : "Waiting for API…";
+                root.title = lastAiConnectivityCheck.detail || routeTitle;
+                return;
+            }
+
+            if (!hasKey) {
+                setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
+                l2.textContent = "No API key";
+                root.title = lastAiConnectivityCheck.detail || "Configure ai-config.js";
+                return;
+            }
+            if (lastAiConnectivityCheck.ok === true) {
+                setStyle("border-emerald-500/70 bg-slate-900/95", "text-emerald-300");
+                l2.textContent = "Smoke test: API OK";
+                root.title = lastAiConnectivityCheck.detail || routeTitle;
+                return;
+            }
+            if (lastAiConnectivityCheck.ok === false) {
+                setStyle("border-amber-600/80 bg-amber-950/40", "text-amber-200");
+                l2.textContent = lastAiConnectivityCheck.summary;
+                root.title = lastAiConnectivityCheck.detail || "";
+                return;
+            }
+            setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
+            l2.textContent = "Checking API…";
+            root.title = routeTitle;
+        }
 
         function renderLevelMenu() {
             const container = document.getElementById('levels-container');
@@ -766,92 +1062,468 @@
             });
             const mapScroll = document.querySelector(".quest-map-wrap");
             if (mapScroll) mapScroll.scrollTop = 0;
+            syncAiRouteNotice();
+            syncMapQuestionBufferHint();
+            syncQuestionsApiBadge();
         }
 
-        let fetchPromise = null;
-
-        async function fetchWithBackoff(url, options, retries = 5) {
-            let delay = 1000;
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-                    return response;
-                } catch (err) {
-                    if (i === retries - 1) throw err;
-                    await new Promise(res => setTimeout(res, delay));
-                    delay *= 2;
-                }
+        /** Ensures battle screen never waits unbounded on live AI (rate limits / slow API). */
+        async function raceWithPrefetchTimeout(promise, ms) {
+            let tid;
+            const timeout = new Promise((_, rej) => {
+                tid = setTimeout(() => {
+                    const e = new Error(
+                        `Live AI did not finish within ${Math.round(ms / 1000)}s (often rate limits or a long model chain). Using offline questions.`
+                    );
+                    e.code = "PREFETCH_TIMEOUT";
+                    rej(e);
+                }, ms);
+            });
+            try {
+                return await Promise.race([promise, timeout]);
+            } finally {
+                clearTimeout(tid);
             }
         }
 
+        async function fetchWithBackoff(url, options, retries = 5, backoffOpts = {}) {
+            const min429 = backoffOpts.min429DelayMs != null ? backoffOpts.min429DelayMs : 5000;
+            const maxDelay = backoffOpts.maxDelayMs != null ? backoffOpts.maxDelayMs : 20000;
+            let delay = backoffOpts.initialDelayMs != null ? backoffOpts.initialDelayMs : 1000;
+            for (let i = 0; i < retries; i++) {
+                let response;
+                try {
+                    response = await fetch(url, options);
+                } catch (err) {
+                    if (i === retries - 1) throw err;
+                    await new Promise((res) => setTimeout(res, delay));
+                    delay = Math.min(delay * 2, maxDelay);
+                    continue;
+                }
+                if (response.ok) return response;
+                if (response.status === 429 && i < retries - 1) {
+                    const raHeader = response.headers.get("Retry-After");
+                    let raMs = 0;
+                    if (raHeader) {
+                        const n = parseInt(raHeader, 10);
+                        if (!Number.isNaN(n)) raMs = Math.min(Math.max(0, n) * 1000, 120000);
+                    }
+                    const wait = Math.max(delay, min429, raMs);
+                    await new Promise((res) => setTimeout(res, wait));
+                    delay = Math.min(delay * 2, maxDelay);
+                    continue;
+                }
+                if (response.status >= 500 && i < retries - 1) {
+                    await new Promise((res) => setTimeout(res, delay));
+                    delay = Math.min(delay * 2, maxDelay);
+                    continue;
+                }
+                throw new Error(`HTTP error ${response.status}`);
+            }
+        }
+
+        /** Used when the API key is missing or the model request fails — must vary so battles are not identical every turn. */
+        const FALLBACK_QUESTIONS = [
+            {
+                topic_category: "Algebra",
+                text: "Solve $x+5=12$.",
+                answer: "7",
+                ideal_explanation: "Subtract $5$ from both sides: $x = 12 - 5 = 7$.",
+                plotly_spec: "",
+                type: "mcq",
+                options: ["5", "7", "12", "17"]
+            },
+            {
+                topic_category: "Arithmetic",
+                text: "What is $2 + 3 \\times 4$?",
+                answer: "14",
+                ideal_explanation: "Multiply first: $3 \\times 4 = 12$, then $2 + 12 = 14$.",
+                plotly_spec: "",
+                type: "mcq",
+                options: ["20", "14", "24", "9"]
+            },
+            {
+                topic_category: "Arithmetic",
+                text: "What is $\\frac{1}{2} + \\frac{1}{4}$?",
+                answer: "$\\frac{3}{4}$",
+                ideal_explanation: "Use a common denominator: $\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}$.",
+                plotly_spec: "",
+                type: "mcq",
+                options: ["$\\frac{2}{6}$", "$\\frac{3}{4}$", "$\\frac{1}{6}$", "$1$"]
+            },
+            {
+                topic_category: "Arithmetic",
+                text: "What is $8 - 3$?",
+                answer: "5",
+                ideal_explanation: "Subtract: $8 - 3 = 5$.",
+                plotly_spec: "",
+                type: "mcq",
+                options: ["11", "5", "3", "24"]
+            },
+            {
+                topic_category: "Geometry",
+                text: "A square has side length $4$. What is its perimeter?",
+                answer: "16",
+                ideal_explanation: "Perimeter of a square is $4 \\times \\text{side} = 4 \\times 4 = 16$.",
+                plotly_spec: "",
+                type: "mcq",
+                options: ["8", "12", "16", "20"]
+            },
+            {
+                topic_category: "Arithmetic",
+                text: "What is $9 \\div 3$?",
+                answer: "3",
+                ideal_explanation: "$9 \\div 3 = 3$.",
+                plotly_spec: "",
+                type: "mcq",
+                options: ["27", "6", "3", "1"]
+            }
+        ];
+
+        function pickFallbackQuestion(excludeText) {
+            const norm = (t) => (t == null ? "" : String(t)).trim();
+            const ex = norm(excludeText);
+            const filtered = FALLBACK_QUESTIONS.filter((q) => norm(q.text) !== ex);
+            const pool = filtered.length ? filtered : FALLBACK_QUESTIONS;
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            return { ...pick, _questionSource: "offline" };
+        }
+
+        function normalizeQuestionStem(t) {
+            return (t == null ? "" : String(t))
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase();
+        }
+
+        /** True when text + explanation use concrete quantities / stories that should always get a Plotly chart. */
+        function responseNeedsNonEmptyPlotlyChart(q) {
+            if (!q || typeof q !== "object") return false;
+            const blob = `${String(q.text || "")} ${String(q.ideal_explanation || "")}`.toLowerCase();
+            if (!/\d/.test(blob)) return false;
+            const physical =
+                /\b(marbles?|apples?|cand(y|ies)|cookies?|toys?|oranges?|stickers?|balloons?|pencils?|eggs?)\b/.test(blob) ||
+                /\b(bag|box|jar|basket)\b/.test(blob);
+            const story =
+                /\b(gave|give|gave away|received|got|lost|take out|take away|put in|started with|began with|had some|now has|now have|how many .{0,16}left|remaining|in all|altogether|more than|fewer|difference|total|sum|combined|plus|minus)\b/.test(
+                    blob
+                );
+            const analogy =
+                /\b(think of (it|this) like|picture|imagine|like a (bag|jar|box)|number line)\b/.test(blob);
+            return physical && (story || analogy);
+        }
+
+        function buildMathQuestionPrompt() {
+            const diff = state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8");
+            let weakestTopic = "Algebra";
+            if (state.skillProfile) {
+                let lowestRatio = 1.1;
+                Object.entries(state.skillProfile).forEach(([topic, data]) => {
+                    const ratio = data.attempts === 0 ? 0 : data.corrects / data.attempts;
+                    if (ratio < lowestRatio) {
+                        lowestRatio = ratio;
+                        weakestTopic = topic;
+                    }
+                });
+            }
+            const nonce =
+                typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+            let avoidPrior = "";
+            const prevStem = state.activeQuestion?.text;
+            if (prevStem && String(prevStem).trim()) {
+                const snippet = String(prevStem).trim().slice(0, 320);
+                avoidPrior = `\n\nThe player was just shown this stem — you must NOT repeat it, reuse the same numbers with different wording, or mirror its structure. Produce a clearly different problem:\n${JSON.stringify(snippet)}`;
+            }
+            return `[SEED: ${Date.now()}] [NONCE: ${nonce}] Generate a unique ${diff} math question explicitly focusing on the concept of "${weakestTopic}". IMPORTANT: When using units like cm, m, or percent, ALWAYS wrap them in \\text{} (e.g., $25 \\text{ cm}$) to fix italicization formatting. Return JSON ONLY. Use LaTeX in the question text where math appears.${avoidPrior}
+
+For ideal_explanation: write as if explaining to a smart 10-year-old — short sentences, everyday words, friendly tone, optional one simple analogy; still be mathematically correct and use LaTeX for formulas. Do not sound like a dry textbook abstract.
+
+For charts vs words: If plotly_spec is "", you must NOT say there is a graph, picture, chart, plot, or "visual" in "text" or "ideal_explanation". If you want a chart, set plotly_spec to a non-empty JSON STRING (escaped in the outer JSON) with valid Plotly content: at least one trace with numeric coordinates (e.g. scatter with "x" and "y" arrays of numbers, or bars). The app renders only plotly_spec — promising a visual in prose without filling plotly_spec is wrong.
+
+Default toward a chart when the math has a clear picture: linear or simple equations, inequalities on a number line, proportional relationships, "y vs x", comparing two quantities, or geometry with lengths/angles. Use a minimal Plotly chart (e.g. scatter mode lines+markers through two points, or a bar chart for two numbers). Reserve plotly_spec "" only when a graph would truly add nothing (e.g. "which expression is prime?", pure symbol push with no numeric story).
+
+STRICT (addition/subtraction & stories): If the question OR ideal_explanation involves marbles, apples, cookies, toys, a bag/jar/box, "gave away", "started with", "take out", "how many left", "in all", or any similar real-world quantity story, plotly_spec MUST be a non-empty valid Plotly string — this is required, not optional. Prefer a horizontal number line: type "scatter", mode "lines+markers", x: numeric tick positions that match the story (e.g. start, after a change, answer), y: same length filled with 0, layout with margin and axis titles. Alternatively use type "bar" with x labels like Start / Change / End and numeric y. Do NOT answer with only prose for those problems; the learner must see the quantities on a chart.`;
+        }
+
+        function parseModelJsonContent(content) {
+            if (content == null) throw new Error("empty model content");
+            let s = typeof content === "string" ? content.trim() : JSON.stringify(content);
+            const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (fenced) s = fenced[1].trim();
+            return JSON.parse(s);
+        }
+
+        function validateQuestionPayload(q) {
+            if (!q || typeof q !== "object") throw new Error("invalid question");
+            const need = ["text", "answer", "ideal_explanation", "type", "options"];
+            for (const k of need) {
+                if (q[k] == null || q[k] === "") throw new Error("missing " + k);
+            }
+            if (!Array.isArray(q.options) || q.options.length !== 4) throw new Error("options must be exactly 4 strings");
+            for (let i = 0; i < q.options.length; i++) {
+                if (q.options[i] == null || String(q.options[i]).trim() === "") throw new Error("empty option");
+            }
+            if (q.plotly_spec != null && typeof q.plotly_spec === "object") {
+                try {
+                    q.plotly_spec = JSON.stringify(q.plotly_spec);
+                } catch (_) {
+                    q.plotly_spec = "";
+                }
+            }
+            if (q.plotly_spec == null) q.plotly_spec = "";
+            if (q.topic_category == null) q.topic_category = "Math";
+        }
+
+        function assertSmokePingJson(parsed) {
+            if (parsed && (parsed.ping === "ok" || parsed.ok === true)) return;
+            throw new Error("Smoke marker missing");
+        }
+
+        async function smokePingDashScope(dashscopeKey, modelId, signal) {
+            const url = dashscopeChatCompletionsUrl();
+            const headers = {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${dashscopeKey}`
+            };
+            const bodyBase = {
+                model: modelId,
+                messages: [{ role: "user", content: 'Output only JSON: {"ping":"ok"}' }],
+                max_tokens: 48
+            };
+            const attemptOnce = async () => {
+                let r = await fetch(url, {
+                    method: "POST",
+                    headers,
+                    signal,
+                    body: JSON.stringify({ ...bodyBase, response_format: { type: "json_object" } })
+                });
+                if (r.status === 400) {
+                    r = await fetch(url, {
+                        method: "POST",
+                        headers,
+                        signal,
+                        body: JSON.stringify(bodyBase)
+                    });
+                }
+                return r;
+            };
+            let res = await attemptOnce();
+            if (res.status === 429) {
+                await new Promise((r) => setTimeout(r, 6000));
+                res = await attemptOnce();
+            }
+            if (res.status === 429) {
+                await new Promise((r) => setTimeout(r, 12000));
+                res = await attemptOnce();
+            }
+            if (res.status === 429) {
+                const e = new Error("DashScope rate limited (429) after retries");
+                e.isRateLimit = true;
+                throw e;
+            }
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`DashScope HTTP ${res.status}: ${errText.slice(0, 200)}`);
+            }
+            const data = await res.json();
+            if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
+            const content = data?.choices?.[0]?.message?.content;
+            if (content == null || String(content).trim() === "") throw new Error("DashScope: empty content");
+            assertSmokePingJson(parseModelJsonContent(content));
+        }
+
+        async function runAiApiRegression() {
+            const el = document.getElementById("t-ai");
+            const set = (label, cls, title) => {
+                safeSet("t-ai", label);
+                if (el) {
+                    el.className = cls;
+                    el.title = title || "";
+                }
+            };
+            const { dsKey, dsModel } = getConfiguredAiKeys();
+            if (!dsKey) {
+                lastAiConnectivityCheck = {
+                    ok: false,
+                    summary: "No API key",
+                    detail: "Set __dashscope_api_key in ai-config.js (Gemini is not used — unavailable in HK)."
+                };
+                set(
+                    "AI: SKIP",
+                    "text-slate-400 font-bold",
+                    "No AI key — offline pool only. When you have a key, the banner above each MCQ shows live vs offline for that question."
+                );
+                syncQuestionsApiBadge();
+                return;
+            }
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 22000);
+            lastAiConnectivityCheck = { ok: null, summary: "", detail: "" };
+            syncQuestionsApiBadge();
+            try {
+                await smokePingDashScope(dsKey, dsModel, ctrl.signal);
+                clearTimeout(tid);
+                lastAiConnectivityCheck = {
+                    ok: true,
+                    summary: "API reachable",
+                    detail: `DashScope · ${dsModel}`
+                };
+                set(
+                    "AI: PASS",
+                    "text-green-400 font-bold",
+                    `${lastAiConnectivityCheck.detail} — Smoke ping only (tiny JSON). The strip does not mean this battle’s MCQ is live; read the label above the question text.`
+                );
+            } catch (e) {
+                clearTimeout(tid);
+                if (e && e.isRateLimit) {
+                    lastAiConnectivityCheck = {
+                        ok: false,
+                        summary: "Rate limited (429)",
+                        detail: e.message || "Upstream busy — try again later"
+                    };
+                    set(
+                        "AI: 429",
+                        "text-amber-400 font-bold",
+                        (e.message || "Rate limited") +
+                            " — Smoke failed; live MCQs may still work or fall back to offline (see banner above question)."
+                    );
+                    syncQuestionsApiBadge();
+                    return;
+                }
+                const msg = e && e.name === "AbortError" ? "Timeout (22s)" : e && e.message ? e.message : String(e);
+                lastAiConnectivityCheck = { ok: false, summary: "API check failed", detail: msg };
+                set(
+                    "AI: FAIL",
+                    "text-red-400 font-bold",
+                    msg + " — Smoke only; check the MCQ source banner and Questions chip on the battle screen."
+                );
+                console.warn("AI API regression:", e);
+            }
+            syncQuestionsApiBadge();
+        }
+
+        function dashScopeMcqUserSuffix() {
+            return (
+                "\n\nHard requirements (Qwen-compatible JSON):\n" +
+                '- type must be the string "mcq".\n' +
+                "- options: exactly 4 non-empty strings, plausible distractors.\n" +
+                "- answer: must exactly match one element of options (same characters and LaTeX).\n" +
+                '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes; never a raw object at this key. If "", do not mention any graph/chart/visual in text or ideal_explanation. If not "", include real numeric trace data so a chart can render (e.g. scatter with numeric "x" and "y").\n' +
+                '- REQUIRED: If text or ideal_explanation mentions marbles, apples, cookies, toys, a bag/box/jar, "gave"/"take away"/"started with"/"how many left"/"in all" or similar quantity stories, plotly_spec MUST NOT be "". Use a number-line scatter (y all 0) or a bar chart with numeric heights.\n' +
+                '- Prefer non-empty plotly_spec when the math has a natural picture (equations, lines, rates, two quantities to compare, number-line ideas); a minimal scatter or bar chart is enough. Use "" only when a graph would not help.\n' +
+                "- ideal_explanation: 3–8 short sentences, ~age-10 reading level, plain friendly words, LaTeX for math; ~150 words max.\n" +
+                '\nReturn one JSON object with exactly these keys: topic_category, text, answer, ideal_explanation, plotly_spec, type, options. No markdown, no code fences.'
+            );
+        }
+
+        async function fetchQuestionViaDashScope(dashscopeKey, basePrompt) {
+            const url = dashscopeChatCompletionsUrl();
+            const { dsModel } = getConfiguredAiKeys();
+            const headers = {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${dashscopeKey}`
+            };
+            const systemMsg = {
+                role: "system",
+                content:
+                    "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. For word problems with objects (marbles, apples, bags) or addition/subtraction stories, always include a non-empty plotly_spec with numeric Plotly data (number line or bars) — never leave plotly_spec empty for those."
+            };
+            const questionBackoff = { min429DelayMs: 3500, maxDelayMs: 22000, initialDelayMs: 1000 };
+
+            const callModel = async (userContent) => {
+                const messages = [systemMsg, { role: "user", content: userContent }];
+                const bodyWithJson = JSON.stringify({
+                    model: dsModel,
+                    messages,
+                    response_format: { type: "json_object" },
+                    temperature: 0.72,
+                    max_tokens: 2800
+                });
+                const bodyPlain = JSON.stringify({
+                    model: dsModel,
+                    messages,
+                    temperature: 0.72,
+                    max_tokens: 2800
+                });
+                let res;
+                try {
+                    res = await fetchWithBackoff(url, { method: "POST", headers, body: bodyWithJson }, 4, questionBackoff);
+                } catch (e) {
+                    const m = e && e.message ? String(e.message) : "";
+                    if (m.includes("400")) {
+                        res = await fetchWithBackoff(url, { method: "POST", headers, body: bodyPlain }, 4, questionBackoff);
+                    } else {
+                        throw e;
+                    }
+                }
+                const data = await res.json();
+                if (data && data.error) {
+                    throw new Error(data.error.message || JSON.stringify(data.error));
+                }
+                const content = data?.choices?.[0]?.message?.content;
+                const parsed = parseModelJsonContent(content);
+                validateQuestionPayload(parsed);
+                return parsed;
+            };
+
+            const prevNorm = normalizeQuestionStem(state.activeQuestion?.text);
+            let parsed = await callModel(basePrompt + dashScopeMcqUserSuffix());
+            if (prevNorm && normalizeQuestionStem(parsed.text) === prevNorm) {
+                parsed = await callModel(
+                    basePrompt +
+                        dashScopeMcqUserSuffix() +
+                        "\n\nCritical: Your previous reply duplicated the last question stem. Output a different problem with new numbers, context, and structure."
+                );
+                if (normalizeQuestionStem(parsed.text) === prevNorm) {
+                    throw new Error("DashScope returned a duplicate question stem");
+                }
+            }
+            if (!parsePlotlySpec(parsed.plotly_spec) && responseNeedsNonEmptyPlotlyChart(parsed)) {
+                parsed = await callModel(
+                    basePrompt +
+                        dashScopeMcqUserSuffix() +
+                        '\n\nYour previous JSON was rejected: it used a marble/bag/object story or quantity word problem but plotly_spec was missing or invalid. Regenerate a complete new MCQ. plotly_spec MUST be a non-empty JSON string with Plotly { "data": [...], "layout": {...} } — e.g. scatter mode "lines+markers" with x = numeric story values and y = [0,0,...], or bar chart. ideal_explanation may refer to that chart. Do not use plotly_spec "" for this class of problem.'
+                );
+                validateQuestionPayload(parsed);
+            }
+            return Object.assign(parsed, { _questionSource: "dashscope", _dashscopeModel: dsModel });
+        }
+
+        const PREFETCH_AI_TIMEOUT_MS = 28000;
+
         async function prefetchQuestion() {
-            // Prevent duplicate network calls if one is already running
             if (fetchPromise) return fetchPromise;
 
             fetchPromise = (async () => {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-                
-                // --- RESTORED DYNAMIC INTELLIGENCE ---
-                // 1. Calculate Difficulty Matrix
-                const diff = state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8");
-                
-                // 2. Analyze Player Profile for Weaknesses
-                let weakestTopic = "Algebra";
-                if (state.skillProfile) {
-                    let lowestRatio = 1.1;
-                    Object.entries(state.skillProfile).forEach(([topic, data]) => {
-                        const ratio = data.attempts === 0 ? 0 : data.corrects / data.attempts;
-                        if (ratio < lowestRatio) { 
-                            lowestRatio = ratio; 
-                            weakestTopic = topic; 
-                        }
-                    });
-                }
-                
-                // 3. Construct the Context-Aware Prompt
-                const prompt = `[SEED: ${Date.now()}] Generate a unique ${diff} math question explicitly focusing on the concept of "${weakestTopic}". IMPORTANT: When using units like cm, m, or percent, ALWAYS wrap them in \\text{} (e.g., $25 \\text{ cm}$) to fix italicization formatting. Return JSON ONLY. Use LaTeX for text and ideal_explanation.
-
-For plotly_spec: when a graph clarifies the correct answer (e.g. linear relationship, area model, comparing quantities), set a JSON STRING value (escaped inside the outer JSON) with Plotly-compatible content, e.g. {"data":[{"x":[0,1,2],"y":[2,4,6],"type":"scatter","mode":"lines+markers","name":"y=2x"}],"layout":{"title":"Why the answer works","height":260}}. Use numeric arrays only. If no useful graph exists, use an empty string "".`;
+                prefetchInFlight = true;
+                syncMapQuestionBufferHint();
+                syncQuestionsApiBadge();
+                const prompt = buildMathQuestionPrompt();
+                const { dsKey } = getConfiguredAiKeys();
+                const cancelLateAi = { cancelled: false };
 
                 try {
-                    const res = await fetchWithBackoff(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }],
-                            generationConfig: {
-                                responseMimeType: "application/json",
-                                responseSchema: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        topic_category: { type: "STRING" },
-                                        text: { type: "STRING" },
-                                        answer: { type: "STRING" },
-                                        ideal_explanation: { type: "STRING" },
-                                        plotly_spec: { type: "STRING", description: "JSON string: { data: [...traces], layout?: {} } for Plotly, or empty string" },
-                                        type: { type: "STRING" },
-                                        options: { type: "ARRAY", items: { type: "STRING" } }
-                                    },
-                                    required: ["topic_category", "text", "answer", "ideal_explanation", "plotly_spec", "type", "options"]
-                                }
-                            }
-                        })
-                    });
-                    const data = await res.json();
-                    state.nextQuestion = JSON.parse(data.candidates[0].content.parts[0].text);
-                } catch (e) { 
-                    // Failsafe fallback
-                    state.nextQuestion = {
-                        text: "Solve $x+5=12$",
-                        answer: "7",
-                        ideal_explanation: "Subtract $5$ from both sides: $x = 12 - 5 = 7$.",
-                        plotly_spec: '{"data":[{"x":[5,12],"y":[7,7],"type":"scatter","mode":"lines+markers","name":"value"}],"layout":{"title":"Same value each side","height":240}}',
-                        type: "mcq",
-                        options: ["5", "7", "12", "17"]
-                    }; 
+                    await raceWithPrefetchTimeout(
+                        (async () => {
+                            if (!dsKey) throw new Error("no DashScope API key configured");
+                            const q = await fetchQuestionViaDashScope(dsKey, prompt);
+                            if (!cancelLateAi.cancelled) state.nextQuestion = q;
+                        })(),
+                        PREFETCH_AI_TIMEOUT_MS
+                    );
+                } catch (e) {
+                    cancelLateAi.cancelled = true;
+                    console.error("prefetchQuestion (live AI failed, using offline pool):", e);
+                    setPrefetchFailureFromError(e);
+                    state.nextQuestion = pickFallbackQuestion(state.activeQuestion?.text);
                 } finally {
+                    prefetchInFlight = false;
                     fetchPromise = null;
+                    syncAiRouteNotice();
+                    syncMapQuestionBufferHint();
+                    syncQuestionsApiBadge();
                 }
             })();
             return fetchPromise;
@@ -860,11 +1532,12 @@ For plotly_spec: when a graph clarifies the correct answer (e.g. linear relation
         async function startGame(level) {
             state.currentLevel = level;
             state.playerHP = 100; state.enemyHP = 100;
+            clearBattleDamageOverlay();
             const qMeta = getQuestNode(level);
             safeSet('enemy-name', qMeta.name);
             safeSet('enemy-lvl-display', level);
-            const useGolem = level % 2 === 0;
-            safeSet('enemy-sprite', useGolem ? ASSETS.golem : ASSETS.slime, 'innerHTML');
+            const spriteEl = document.getElementById("enemy-sprite");
+            if (spriteEl) spriteEl.innerHTML = battleBossSvgMarkup(level);
             updateHP();
             
             // Instantly transition the UI so the user isn't stuck waiting
@@ -874,17 +1547,28 @@ For plotly_spec: when a graph clarifies the correct answer (e.g. linear relation
             if (!state.nextQuestion) {
                 document.getElementById('question-text').innerText = "Summoning math magic...";
                 document.getElementById('mcq-grid').innerHTML = '';
-                await prefetchQuestion();
+                updateQuestionSourceBadge(null);
             }
-            loadQuestion();
+            await loadQuestion();
         }
 
-        function loadQuestion() {
-            const q = state.nextQuestion;
-            state.nextQuestion = null; // Consume the question immediately
+        async function loadQuestion() {
+            clearBattleDamageOverlay();
+            if (!state.nextQuestion) {
+                await prefetchQuestion();
+            }
+            let q = state.nextQuestion;
+            state.nextQuestion = null;
+            if (!q) {
+                q = pickFallbackQuestion(state.activeQuestion?.text);
+            }
             state.activeQuestion = q;
-            
-            // Prefetch next one for flow
+            if (q._questionSource === "dashscope" || q._questionSource === "openrouter" || q._questionSource === "gemini") {
+                clearPrefetchFailureUi();
+                syncAiRouteNotice();
+                syncMapQuestionBufferHint();
+            }
+
             prefetchQuestion();
             
             const qEl = document.getElementById('question-text');
@@ -902,6 +1586,8 @@ For plotly_spec: when a graph clarifies the correct answer (e.g. linear relation
                 grid.appendChild(b);
             });
             MathJax.typesetPromise([grid]);
+            updateQuestionSourceBadge(q);
+            syncQuestionsApiBadge();
         }
 
         function updateHP() {
@@ -994,15 +1680,21 @@ For plotly_spec: when a graph clarifies the correct answer (e.g. linear relation
                     showDamage('player-damage', 25);
                 }
                 updateHP();
-                setTimeout(() => {
+                setTimeout(async () => {
                     bS.classList.remove('animate-shake');
                     if (state.enemyHP <= 0 || state.playerHP <= 0) {
                         finishBattle(state.enemyHP <= 0);
                         state.isAnimating = false;
                     } else if (isCorrect) {
-                        showDetailedFeedback("Nice work — here's a visual and the reasoning behind the correct answer.");
+                        const aq = state.activeQuestion || {};
+                        const hasChart = parsePlotlySpec(aq.plotly_spec) != null;
+                        showDetailedFeedback(
+                            hasChart
+                                ? "Nice work — here's a chart and step-by-step reasoning."
+                                : "Nice work — here's step-by-step reasoning (no chart for this question)."
+                        );
                     } else {
-                        loadQuestion();
+                        await loadQuestion();
                         state.isAnimating = false;
                     }
                 }, 400);
@@ -1028,14 +1720,14 @@ For plotly_spec: when a graph clarifies the correct answer (e.g. linear relation
             renderLevelMenu();
             syncCurrentProfileToCloud();
         };
-        window.closeDetailedFeedback = () => {
+        window.closeDetailedFeedback = async () => {
             const plotEl = document.getElementById("plot-container");
             if (plotEl) {
                 if (typeof Plotly !== "undefined") Plotly.purge(plotEl);
                 plotEl.classList.add("hidden");
             }
             document.getElementById("detailed-feedback-overlay").classList.add("hidden");
-            loadQuestion();
+            await loadQuestion();
             state.isAnimating = false;
             syncCurrentProfileToCloud();
         };
