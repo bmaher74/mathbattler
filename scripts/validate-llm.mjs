@@ -19,6 +19,11 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
+import { parseAndValidate } from "../js/ai/parseModelJson.js";
+import { SmokePingSchema, PracticeMcqSchema } from "../js/ai/schemas/index.js";
+import { finalizePracticeMcq } from "../js/ai/finalizePracticeMcq.js";
+import { parsePlotlySpec } from "../js/ai/plotlyQuestionHeuristics.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
@@ -123,71 +128,6 @@ function dashscopeChatUrl(cfg) {
     return cfg.dsBase.replace(/\/$/, "") + "/chat/completions";
 }
 
-function parseModelJsonContent(content) {
-    if (content == null) throw new Error("empty model content");
-    let s = typeof content === "string" ? content.trim() : JSON.stringify(content);
-    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenced) s = fenced[1].trim();
-    return JSON.parse(s);
-}
-
-/**
- * Normalize common LLM LaTeX currency glitches like `$\$15$` or `$ \$ 15 $`.
- * Keep dollars out of math mode to avoid edge-case MathJax parsing issues.
- */
-function normalizeLatexCurrency(s) {
-    if (s == null) return s;
-    let out = String(s);
-    out = out.replace(/\$\s*\\\$\s*([0-9]+(?:\.[0-9]+)?)\s*\$/g, (_, amt) => `\\$${amt}`);
-    out = out.replace(/\$\s*\$\s*([0-9]+(?:\.[0-9]+)?)\s*\$/g, (_, amt) => `\\$${amt}`);
-    return out;
-}
-
-function parsePlotlySpec(raw) {
-    if (!raw || typeof raw !== "string" || !raw.trim()) return null;
-    try {
-        const spec = JSON.parse(raw);
-        const data = Array.isArray(spec.data) ? spec.data : null;
-        if (!data || !data.length) return null;
-        return {
-            data,
-            layout: typeof spec.layout === "object" && spec.layout !== null ? spec.layout : {}
-        };
-    } catch (_) {
-        return null;
-    }
-}
-
-function validateQuestionPayload(q) {
-    if (!q || typeof q !== "object") throw new Error("invalid question");
-    const need = ["text", "answer", "ideal_explanation", "type", "options"];
-    for (const k of need) {
-        if (q[k] == null || q[k] === "") throw new Error("missing " + k);
-    }
-    q.text = normalizeLatexCurrency(q.text);
-    q.ideal_explanation = normalizeLatexCurrency(q.ideal_explanation);
-    q.answer = normalizeLatexCurrency(q.answer);
-    if (Array.isArray(q.options)) q.options = q.options.map((o) => normalizeLatexCurrency(o));
-    if (!Array.isArray(q.options) || q.options.length !== 4) throw new Error("options must be exactly 4 strings");
-    for (let i = 0; i < q.options.length; i++) {
-        if (q.options[i] == null || String(q.options[i]).trim() === "") throw new Error("empty option");
-    }
-    if (q.plotly_spec != null && typeof q.plotly_spec === "object") {
-        try {
-            q.plotly_spec = JSON.stringify(q.plotly_spec);
-        } catch (_) {
-            q.plotly_spec = "";
-        }
-    }
-    if (q.plotly_spec == null) q.plotly_spec = "";
-    if (q.topic_category == null) q.topic_category = "Math";
-}
-
-function assertSmokePingJson(parsed) {
-    if (parsed && (parsed.ping === "ok" || parsed.ok === true)) return;
-    throw new Error("Smoke marker missing");
-}
-
 async function sleep(ms) {
     await new Promise((r) => setTimeout(r, ms));
 }
@@ -272,7 +212,8 @@ async function smokeDashScopeCfg(cfg) {
     if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
     const content = data?.choices?.[0]?.message?.content;
     if (content == null || String(content).trim() === "") throw new Error("DashScope: empty content");
-    assertSmokePingJson(parseModelJsonContent(content));
+    const smokePv = parseAndValidate(SmokePingSchema, content, { lenient: true });
+    if (!smokePv.ok) throw new Error(smokePv.issuesText || "Smoke schema validation failed");
 }
 
 const DASHSCOPE_MCQ_USER_SUFFIX =
@@ -338,8 +279,10 @@ async function questionDashScope(cfg) {
     const data = await res.json();
     if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
     const content = data?.choices?.[0]?.message?.content;
-    const parsed = parseModelJsonContent(content);
-    validateQuestionPayload(parsed);
+    const mcqPv = parseAndValidate(PracticeMcqSchema, content, { lenient: true });
+    if (!mcqPv.ok) throw new Error(mcqPv.issuesText || "MCQ schema validation failed");
+    finalizePracticeMcq(mcqPv.data);
+    const parsed = mcqPv.data;
     const parsedPlot = parsePlotlySpec(parsed.plotly_spec);
     if (cfg.__cli_requirePlot && !parsedPlot) {
         throw new Error("plotly_spec missing/invalid but --require-plot was set");
