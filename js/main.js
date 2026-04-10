@@ -24,7 +24,6 @@ import { proseWithMathToHtml, escapeHtmlText } from "./ai/displayMathProse.js";
 import { parseAndValidate, extractJsonFromModelText, parseJsonLenient } from "./ai/parseModelJson.js";
 import {
     CombatQuestionSchema,
-    JudgeResultSchema,
     PracticeMcqSchema,
     BossMetaSchema,
     ScanHintSchema,
@@ -33,7 +32,8 @@ import {
 } from "./ai/schemas/index.js";
 import { finalizeCombatQuestion } from "./ai/finalizeCombatQuestion.js";
 import { finalizePracticeMcq } from "./ai/finalizePracticeMcq.js";
-import { finalizeJudgeResult } from "./ai/finalizeJudgeResult.js";
+import { runDashScopeJudge } from "./ai/runDashScopeJudge.js";
+import { localFallbackJudge } from "./ai/localFallbackJudge.js";
 import { sanitizeLlmProseString } from "./ai/llmProseSanitize.js";
 import { LLM_NO_MARKDOWN_IN_STRINGS, PROMPT_VERSION } from "./ai/prompts/contract.js";
 import {
@@ -1448,7 +1448,7 @@ function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
     const difficultyCalculationLine = easier
         ? `Difficulty label is Introductory because the player is on a remedial/easier question this round (potion or struggle path) — use Foundations-style tasks even if map level is ${state.currentLevel}.`
         : `Difficulty label follows map level: level ${state.currentLevel} → ${difficultyFromLevel.split("(")[0].trim()}.`;
-    const criterionCycle = ["A", "B", "C"];
+    const criterionCycle = ["A", "B", "C", "D"];
     const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
     const enemyName = String(getQuestNode(state.currentLevel)?.name || "Enemy");
     if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
@@ -1492,7 +1492,7 @@ Role: You are an expert IB Middle Years Programme (MYP) Math Examiner acting as 
 Current Combat Parameters:
 - Enemy Name: ${enemyName}
 - Map level (progression gate): ${state.currentLevel}
-- MYP criterion focus: ${targetCriterion} (A: knowing & procedures; B: patterns, rules, generalization; C: communicating & interpreting representations)
+- MYP criterion focus: ${targetCriterion} (A: knowing & understanding — facts, procedures; B: investigating patterns — rules, generalisation, justification; C: communicating — representations and clear mathematical language in text; D: applying in real-life contexts — modelling, assumptions, interpretation, reasonableness)
 
 Difficulty (computed for this player — obey the label AND the curriculum band in the constraints block):
 - Display difficulty: ${diff}
@@ -1526,7 +1526,7 @@ LAYER 2 — Novel for the student (use your full training freely; stay inside MY
   - Taunt delivery spark: ${dmDeliveryNudge}
 - The "text" field MUST contain two clear parts in order: (1) The Taunt — short, slightly arrogant or dramatic, math-themed challenge from ${enemyName} or the scene (ages 11–13). (2) The Task — the actual math question, plainly stated so a student knows what to answer. Do not bury the math in confusion unless the topic is genuinely Real-Life Modeling and the task is still unambiguous.
 - Taunt + task should read as one mini-quest, not two pasted paragraphs. Prefer specific invented details over generic filler (e.g. tired “Monday morning bus” tropes unless travel/timetable math truly fits).
-- Vary mathematical surface form when it suits the criterion: simplify, solve, determine, model with an equation, interpret a tiny table or description, justify a pattern (especially for B). Avoid repeating the same story skeleton every time; skip marble-bag clichés unless appropriate—and then include the required chart.
+- Vary mathematical surface form when it suits the criterion: simplify, solve, determine, model with an equation, interpret a tiny table or description, justify a pattern (especially for B). For Criterion D, use believable messy numbers, budgets, distances, schedules, or measurements; ask for interpretation ("does this make sense?"), an explicit assumption, or a limitation of the model when it fits the band. Avoid repeating the same story skeleton every time; skip marble-bag clichés unless appropriate—and then include the required chart.
 
 For ideal_explanation: write as if explaining to a smart 10-year-old — short sentences, everyday words, friendly tone, optional one simple analogy; still be mathematically correct and use LaTeX for formulas inside $...$ only (no Markdown, no pipe tables, no **). Do not sound like a dry textbook abstract.
 
@@ -1666,9 +1666,9 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     return (
         "\n\nHard requirements (Qwen-compatible JSON):\n" +
         '- type must be the string "input".\n' +
-        '- criterion must be one of "A", "B", "C" (targeted by the prompt).\n' +
+        '- criterion must be one of "A", "B", "C", "D" (same letter as MYP criterion focus in the prompt).\n' +
         "- expected_answer: the canonical final answer as a short string (may include LaTeX).\n" +
-        "- success_criteria: 2–5 bullet points (as a single string) describing what earns full credit for the targeted criterion.\n" +
+        "- success_criteria: 2–5 bullet points (as a single string). Each bullet must describe text evidence that would justify achievement levels 7–8 for the targeted criterion letter ONLY (e.g. B: tested cases + generalisation; C: clear structure and mathematical language; D: model with assumption and/or comment on plausibility in context). Do not bundle other criteria into these bullets.\n" +
         '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes; never a raw object at this key. If "", do not mention any graph/chart/visual in text or ideal_explanation. If not "", include real numeric trace data so a chart can render (e.g. scatter with numeric "x" and "y").\n' +
         "- Curriculum: keep within IB MYP Year 7–8 scope and obey the band indicated in the prompt; avoid calculus/trig/logs/quadratic formula.\n" +
         '- REQUIRED: If text or ideal_explanation mentions marbles, apples, cookies, toys, a bag/box/jar, "gave"/"take away"/"started with"/"how many left"/"in all" or similar quantity stories, plotly_spec MUST NOT be "". Use a number-line scatter (y all 0) or a bar chart with numeric heights.\n' +
@@ -2012,105 +2012,18 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     }
      document.getElementById("detailed-feedback-overlay").classList.remove("hidden");
 }
- function buildJudgePrompt({ question, studentResponse }) {
-    const q = question || {};
-    const criterion = String(q.criterion || "A").toUpperCase();
-    const expected = String(q.expected_answer || "");
-    const stem = String(q.text || "");
-    const success = String(q.success_criteria || "");
-    const diff = state.currentLevel <= 3 ? "Foundations" : (state.currentLevel <= 6 ? "IB MYP Year 7" : "IB MYP Year 8");
-    return (
-        `You are an IB MYP mathematics assessor (${diff}, criterion ${criterion}). ` +
-        `Apply a rubric aligned to MYP A/B/C: strict on mathematical correctness; fair on how students express ideas in plain text. ` +
-        `Reward clear informal reasoning—do not require stock phrases.\n\n` +
-        `QUESTION: ${JSON.stringify(stem)}\n` +
-        `EXPECTED_ANSWER: ${JSON.stringify(expected)}\n` +
-        `SUCCESS_CRITERIA (full credit): ${JSON.stringify(success)}\n` +
-        `STUDENT_RESPONSE: ${JSON.stringify(studentResponse)}\n\n` +
-        `MYP expectations (${diff}): Multiple valid representations count—clear arithmetic with units, timelines in words, or informal step lists can earn solid reasoning. ` +
-        `Do NOT require formal lettered formulas (e.g. $d=60t$, $d=rt$) unless the question explicitly asks for an equation or named variables. ` +
-        `If the student is correct but informal, prefer correct_with_reasoning when steps match the math; use next_steps to suggest optional formal modeling, not to imply their approach failed.\n\n` +
-        `Math in your JSON strings (feedback, strengths, next_steps): MathJax INLINE TeX in single dollar signs ONLY, e.g. $t$, $2.5$, $d=60t$, $60\\times 2.5=150$. ` +
-        `Never use $$...$$. No Markdown (no **, backticks, pipe tables, # headings, or bare LaTeX without delimiters). Every $ must be paired ($...$).\n\n` +
-        `${LLM_NO_MARKDOWN_IN_STRINGS}\n\n` +
-        `Output one JSON object only, with keys:\n` +
-        `- band: "incorrect" | "partial" | "correct_no_reasoning" | "correct_with_reasoning"\n` +
-        `- score: integer 0–8 (0 none, 8 excellent)\n` +
-        `- isCorrect: boolean\n` +
-        `- isCrit: boolean (see rules below)\n` +
-        `- extracted_final_answer: string\n` +
-        `- strengths: array of 1–3 short strings\n` +
-        `- next_steps: array of 1–3 short strings\n` +
-        `- feedback: string in exactly this shape:\n` +
-        `  What you did well: ...\n` +
-        `  To score higher next time:\n` +
-        `  - ...\n` +
-        `  - ...\n` +
-        `  Example sentence starter: ...\n\n` +
-        `Scoring:\n` +
-        `1) Wrong final answer → band incorrect or partial, score ≤3, isCrit false.\n` +
-        `2) Right answer but reasoning missing, contradictory, or not tied to the work → correct_no_reasoning, score 4–6, isCrit false.\n` +
-        `3) Right answer and solid reasoning (steps match the math; informal language OK) → correct_with_reasoning, score 6–8.\n` +
-        `4) isCrit true only if isCorrect and score is 8 or the top of 7 with an excellent explanation.\n\n` +
-        `Grouping / order: If the student states the correct order of operations and their expression uses parentheses or brackets consistent with that story, treat that as adequate explanation of grouping. Do not downgrade for lacking an extra sentence like “parentheses ensure…”.\n\n` +
-        `next_steps: Use for optional polish (e.g. map each verbal step to a part of the expression; suggest terms like order of operations, grouping)—not to imply they failed when the core idea is already correct.\n\n` +
-        `Notation: Answers are plain keyboard text. Never penalize band or score for using x, *, “times”, or parentheses for multiplication; never tell them to use × instead of x.\n` +
-        `Typos: A clear misspelling (e.g. “mulitply”) may lower score by at most 1 point; do not change band on a minor typo alone if math and reasoning are sound. You may note it briefly in next_steps.\n\n` +
-        `Ignore filler; judge whether the math is right and the explanation supports it.\n` +
-        `The feedback string must stay plain prose with "-" bullet lines only — no tables or markdown.\n`
-    );
-}
  async function gradeResponseViaDashScope({ question, studentResponse }) {
-    const { dsKey, dsModel } = getConfiguredAiKeys();
-    if (!dsKey) throw new Error("no DashScope API key configured");
-    const url = dashscopeChatCompletionsUrl();
-    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` };
-    const systemMsg = {
-        role: "system",
-        content:
-            "You output exactly one valid JSON object and nothing else. No markdown, no code fences, no commentary. Use double quotes for JSON strings. Escape any newlines inside strings with \\n and escape quotes inside strings. " +
-            LLM_NO_MARKDOWN_IN_STRINGS
-    };
-    const userContent = buildJudgePrompt({ question, studentResponse });
-    debugLogAiPrompt("dashscope.judge", userContent);
-    const bodyWithJson = JSON.stringify({
-        model: dsModel,
-        messages: [systemMsg, { role: "user", content: userContent }],
-        response_format: { type: "json_object" },
-        temperature: 0.0,
-        max_tokens: 750
+    const difficultyLabel =
+        state.currentLevel <= 3 ? "Foundations" : state.currentLevel <= 6 ? "IB MYP Year 7" : "IB MYP Year 8";
+    return runDashScopeJudge({
+        question,
+        studentResponse,
+        difficultyLabel,
+        fetchWithBackoff,
+        getConfiguredAiKeys,
+        dashscopeChatCompletionsUrl,
+        debugLogAiPrompt
     });
-    const doCall = async (extraUserNudge) => {
-        const nudgedBody = extraUserNudge
-            ? JSON.stringify({
-                  model: dsModel,
-                  messages: [systemMsg, { role: "user", content: userContent + extraUserNudge }],
-                  response_format: { type: "json_object" },
-                  temperature: 0.0,
-                  max_tokens: 750
-              })
-            : bodyWithJson;
-        const res = await fetchWithBackoff(url, { method: "POST", headers, body: nudgedBody }, 3, {
-            min429DelayMs: 3500,
-            maxDelayMs: 20000,
-            initialDelayMs: 900
-        });
-        const data = await res.json();
-        if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
-        return data?.choices?.[0]?.message?.content;
-    };
-    let content = await doCall("");
-    let jv = parseAndValidate(JudgeResultSchema, content, { lenient: true });
-    if (!jv.ok) {
-        content = await doCall(
-            "\n\nCRITICAL: Your previous output failed schema validation.\n" +
-                jv.issuesText +
-                "\n\nOutput ONLY one JSON object. Escape newlines in strings as \\n."
-        );
-        jv = parseAndValidate(JudgeResultSchema, content, { lenient: true });
-    }
-    if (!jv.ok) throw new Error("judge schema: " + jv.issuesText);
-    return finalizeJudgeResult(jv.data);
 }
  function damageForJudgement(judged) {
     const band = judged?.band;
@@ -2119,28 +2032,6 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     if (band === "correct_no_reasoning") return { enemy: 15, player: 0, label: "WEAK HIT!", isCrit: false };
     if (band === "partial") return { enemy: 10, player: 10, label: "GLANCING HIT!", isCrit: false };
     return { enemy: 0, player: 20, label: "SPELL FIZZLED!", isCrit: false };
-}
- function normalizeForCompare(s) {
-    return (s == null ? "" : String(s))
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
-}
- function localFallbackJudge({ question, studentResponse }) {
-    const expected = normalizeForCompare(question?.expected_answer);
-    const resp = normalizeForCompare(studentResponse);
-    const hasSteps = /(\n|\.|;|therefore|so|because|then)/i.test(studentResponse) && studentResponse.length >= 25;
-    const looksCorrect = expected && (resp.includes(expected) || resp === expected);
-    const band = looksCorrect ? (hasSteps ? "correct_with_reasoning" : "correct_no_reasoning") : (studentResponse.length >= 25 ? "partial" : "incorrect");
-    const feedback =
-        band === "correct_with_reasoning"
-            ? "What you did well: You included a clear method and a conclusion.\nTo score higher next time:\n- Keep your steps in order.\n- Add a quick check (substitute back or estimate).\nExample sentence starter: “First I…, then I…, so…, therefore ….”"
-            : band === "correct_no_reasoning"
-              ? "What you did well: Your final answer looks correct.\nTo score higher next time:\n- Show 2–5 steps (what you did and why).\n- End with a conclusion sentence.\nExample sentence starter: “First I…, then I…, so…, therefore ….”"
-              : band === "partial"
-                ? "What you did well: You started explaining.\nTo score higher next time:\n- Write the equation/operation you are using.\n- Show the key step that gets you to the final answer.\nExample sentence starter: “I start with…, then I…, so….”"
-                : "What you did well: You tried.\nTo score higher next time:\n- Write the equation or rule you’re using.\n- Show at least 2 steps.\nExample sentence starter: “First I…, then I….”";
-    return { band, isCorrect: looksCorrect, isCrit: false, score: null, strengths: [], next_steps: [], feedback };
 }
  // --- PRACTICE MODE (MCQ, non-combat) ---
  function dashScopePracticeMcqSuffix() {

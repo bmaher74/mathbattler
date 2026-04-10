@@ -28,6 +28,7 @@ const { proseWithMathToHtml, escapeHtmlText, nl2brRespectingInlineMath } = await
 );
 const { finalizeCombatQuestion } = await import(join(ROOT, "js/ai/finalizeCombatQuestion.js"));
 const { finalizePracticeMcq } = await import(join(ROOT, "js/ai/finalizePracticeMcq.js"));
+const { finalizeJudgeResult } = await import(join(ROOT, "js/ai/finalizeJudgeResult.js"));
 
 describe("parseAndValidate", () => {
     it("accepts fenced JSON for smoke ping", () => {
@@ -69,6 +70,12 @@ describe("CombatQuestionSchema", () => {
         const r = CombatQuestionSchema.safeParse({ ...minimal, plotly_spec: "" });
         assert.equal(r.success, true);
         assert.doesNotThrow(() => finalizeCombatQuestion({ ...r.data }));
+    });
+
+    it("accepts criterion D", () => {
+        const r = CombatQuestionSchema.safeParse({ ...minimal, criterion: "d" });
+        assert.equal(r.success, true);
+        assert.equal(r.data.criterion, "D");
     });
 });
 
@@ -123,6 +130,38 @@ describe("JudgeResultSchema", () => {
             next_steps: ["Write the equation"]
         });
         assert.equal(r.success, true);
+    });
+});
+
+describe("finalizeJudgeResult", () => {
+    it("upgrades band when score is high but band is too low", () => {
+        const out = finalizeJudgeResult({
+            band: "incorrect",
+            isCorrect: true,
+            score: 8,
+            isCrit: true,
+            extracted_final_answer: "5",
+            feedback: "What you did well: x\nTo score higher next time:\n- y\nExample sentence starter: z",
+            strengths: ["a"],
+            next_steps: ["b"]
+        });
+        assert.equal(out.band, "correct_with_reasoning");
+        assert.equal(out.score, 8);
+        assert.equal(out.isCrit, true);
+    });
+
+    it("clears isCrit when score is below 7", () => {
+        const out = finalizeJudgeResult({
+            band: "correct_with_reasoning",
+            isCorrect: true,
+            score: 6,
+            isCrit: true,
+            extracted_final_answer: "",
+            feedback: "What you did well: x\nTo score higher next time:\n- y\nExample sentence starter: z",
+            strengths: [],
+            next_steps: []
+        });
+        assert.equal(out.isCrit, false);
     });
 });
 

@@ -8,4 +8,4 @@ export const LLM_NO_MARKDOWN_IN_STRINGS =
     "Forbidden: Markdown pipe tables (| col |, ---|---), # headings, ** or __ emphasis, backticks or ``` fences, raw HTML tags, $$...$$ display blocks, bare LaTeX without $...$. " +
     "For small data grids use labeled lines like 'Day 1: 5 laps', not a table.";
 
-export const PROMPT_VERSION = "2026-04-10-ai-core";
+export const PROMPT_VERSION = "2026-04-10-myp-judge";

@@ -15,7 +15,7 @@ A web-based, zero-installation RPG battler designed for Middle Years Programme (
 * **Question Formats:**
   * *Multiple Choice (MCQ):* 4 dynamically generated options formatted with LaTeX.
   * *Open-Ended Input:* Text evaluation where an AI "Pedagogical Judge" reads the student's reasoning (e.g., "I think it's 7 because...") and scores it based on mathematical truth, ignoring conversational filler.
-* **Update / Clarification (Apr 2026):** Combat questions must be **open-ended typed response** (not MCQ). Students submit a final answer *and* reasoning, and the AI judge marks using the MYP-style rubric described below (Criterion A/B/C). MCQ may still exist as a non-combat practice mode, but **not** the primary battle loop.
+* **Update / Clarification (Apr 2026):** Combat questions must be **open-ended typed response** (not MCQ). Students submit a final answer *and* reasoning, and the AI judge marks using MYP Mathematics-style criteria **A–D** (see below). Students can only type plain text (no drawings); the judge accepts verbal descriptions of graphs or representations when appropriate for **Criterion C**. MCQ may still exist as a non-combat practice mode, but **not** the primary battle loop.
 * **Visual Explanations:** The system must support `Plotly.js` to render dynamic scatter or bar charts inside the feedback window to visually explain complex concepts.
 * **Curriculum Constraints (Apr 2026):** Generated problems, explanations, and marking must be **explicitly constrained to IB MYP Year 7/8 scope**, and must use the current game level to set difficulty band (Foundations → Year 7 → Year 8). Out-of-scope topics (e.g., calculus/trigonometry/logarithms/quadratic formula) must be avoided.
 
@@ -65,13 +65,13 @@ The game relies on two distinct LLM calls that must adhere to strict JSON schema
     * **Context Injected:** Current map difficulty (e.g., "Grade 7") and the targeted MYP topic (e.g., "Fractions").
     * **Formatting Constraints:** Instructed to ALWAYS wrap units in `\text{}` for LaTeX compatibility.
     * **Output Schema:** Must return structured JSON (no markdown) and include `plotly_spec` as described above.
-    * **Logic (Apr 2026):** Combat generation prioritizes open-ended questions aligned to MYP Criterion A/B/C; the game level and student skill profile must drive difficulty and topic selection.
+    * **Logic (Apr 2026):** Combat generation rotates open-ended questions aligned to **MYP Criteria A–D**; the game level and student skill profile must drive difficulty and topic selection.
 
 * **The Pedagogical Evaluator Prompt (Combat Input):**
-    * **Context Injected:** The original question, the expected mathematical answer, and the student's raw text input.
-    * **Directive:** "Determine if the student's input demonstrates mathematical understanding and arrives at the correct value, even if embedded in conversational text."
-    * **Output Schema (Apr 2026):** Must return a rubric-aligned JSON object that includes correctness, a band/score, and feedback that teaches answer structure.
-    * **Rubric scope (Apr 2026):** Questions must come from **MYP Criterion A, B, and C**, and marking must follow the same marking scheme (Rubicon-style) used for those criteria.
+    * **Context Injected:** The original question, `expected_answer`, `success_criteria`, targeted criterion letter, difficulty band (Foundations / Year 7 / Year 8), and the student's raw text input.
+    * **Directive:** Assign an **achievement level 0–8 for the targeted criterion only** (paraphrased MYP-style descriptors in `js/ai/prompts/mypMathRubric.js`). `isCorrect` follows task success against `success_criteria`, not string-matching alone. Plain-text-only responses: accept described representations where a drawing is not possible.
+    * **Output Schema (Apr 2026):** Must return a rubric-aligned JSON object that includes `band`, `score` (achievement level for that criterion), `isCorrect`, `isCrit` (game flag), and feedback.
+    * **Rubric scope (Apr 2026):** Questions and marking use **MYP Criterion A, B, C, and D**; game bands map deterministically from `score` (see judge prompt + `finalizeJudgeResult` harmonisation).
 
 ## 8. The Regression Suite (Self-Healing Anchors)
 To prevent LLM "Compression Bias" (where future code updates accidentally erase complex visual details to save tokens), the application runs a continuous integrity check on load.

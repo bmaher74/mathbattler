@@ -15,7 +15,7 @@ This file maps requirements in [`Game_Requirements.md`](./Game_Requirements.md) 
 - **Implemented**: Combat is open-ended typed response (textarea + judge) (`index.html`, `#answer-form`, `handleInputAttack`)
 - **Implemented**: MCQ exists as non-combat practice mode (`#practice-overlay`)
 - **Implemented**: Plotly.js loaded and renders from `plotly_spec` string in Solution overlay (`showDetailedFeedback`, `Plotly.newPlot`)
-- **Partial**: Rubric-style marking exists as bands but needs criterion-aware scoring details and `isCrit` support (see `buildJudgePrompt`, `gradeResponseViaDashScope`)
+- **Implemented**: MYP-style marking with criterion **A–D** rotation, per-criterion achievement levels (`score`), `success_criteria`-aware `isCorrect`, plain-text rules, and shared judge pipeline (`js/ai/prompts/buildJudgePrompt.js`, `js/ai/runDashScopeJudge.js`, `js/ai/prompts/mypMathRubric.js`, `finalizeJudgeResult` band/score harmonisation + `isCrit` guard)
 
 ## 3) Progression & retention algorithm
 - **Implemented**: Tracks per-topic attempts/corrects in skill profile and stores in local + Firestore (merge logic in `index.html`)
@@ -46,7 +46,7 @@ This file maps requirements in [`Game_Requirements.md`](./Game_Requirements.md) 
 ## 7) AI prompt engineering
 - **Partial**: Uses DashScope (Qwen) for live questions and judging, with JSON-only constraints and response_format json_object
 - **Missing**: Combat generator prompt should be defined explicitly from [`Question Prompt Template.md`](./Question Prompt Template.md) (with Apr 2026 combat update: input-only)
-- **Partial**: Judge prompt exists but needs rubric-aligned detail, criterion-aware scoring, and `isCrit`
+- **Implemented**: Judge uses examiner-style procedure, criterion-specific rubric text, score→band table, and `evaluateTextAnswer` in `js/llm.js` calls `runDashScopeJudge` (keep in sync with `js/main.js` grading)
 
 ## 8) Regression suite (self-healing anchors)
 - **Implemented**: Visual anchors test + MathJax + Vault + Scroll integrity checks

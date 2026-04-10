@@ -1,4 +1,6 @@
 import { state, safeSet, MAX_RECENT_STEMS, normalizeQuestionStem, rememberQuestionStem } from "./state.js";
+import { runDashScopeJudge } from "./ai/runDashScopeJudge.js";
+import { localFallbackJudge } from "./ai/localFallbackJudge.js";
 
 function readConfigString(v) {
     if (v == null) return "";
@@ -1343,7 +1345,7 @@ function responseNeedsNonEmptyPlotlyChart(q) {
  function buildMathQuestionPrompt() {
     const easier = state.forceEasierNextQuestion === true;
     const diff = easier ? "Introductory" : (state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8"));
-    const criterionCycle = ["A", "B", "C"];
+    const criterionCycle = ["A", "B", "C", "D"];
     const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
     const enemyName = String(getQuestNode(state.currentLevel)?.name || "Enemy");
     const contextSeeds = [
@@ -1403,8 +1405,9 @@ Current Combat Parameters:
 - Difficulty: ${diff}
 - Topic: ${chosenTopic}
 - Enemy Name: ${enemyName}
+- MYP criterion focus: ${targetCriterion} (A: knowing & understanding; B: investigating patterns; C: communicating in text; D: applying in real-life contexts — modelling, assumptions, interpretation, reasonableness)
 
-Task: Generate 1 unique, rigorous MYP-aligned math question based on the topic and difficulty.
+Task: Generate 1 unique, rigorous MYP-aligned math question based on the topic and difficulty. criterion in JSON must be "${targetCriterion}".
 
 Tone & Narrative (CRITICAL):
 - The question "text" MUST be formatted in two parts:
@@ -1422,7 +1425,7 @@ ${buildMypConstraintsBlock(state.forceEasierNextQuestion === true ? 1 : state.cu
 CREATIVITY & VARIATION (must follow):
 - Use this scenario seed to keep things fresh: ${contextSeed}.
 - Do NOT reuse the same story template repeatedly. Avoid the cliché “bag of marbles / gave away / found more / now has” structure unless the prompt explicitly demands it.
-- Vary the surface form: sometimes ask to simplify, solve, determine, represent with an equation, interpret a small table/graph, or justify a pattern (especially for Criterion B).
+- Vary the surface form: sometimes ask to simplify, solve, determine, represent with an equation, interpret a small table/graph, or justify a pattern (especially for Criterion B). For Criterion D, use realistic contexts and ask for interpretation, an assumption, or whether the answer is plausible when appropriate.
 - Vary names, objects, and settings. Prefer realistic MYP contexts (school, sports, shopping, science, games) over marbles unless needed.
 - For Criterion B, prioritize patterns/sequences/generalization and justification (not just a word-problem equation solve).
 
@@ -1474,7 +1477,7 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     q.ideal_explanation = normalizeLatexCurrency(q.ideal_explanation);
     q.expected_answer = normalizeLatexCurrency(q.expected_answer);
     q.criterion = String(q.criterion).trim().toUpperCase();
-    if (!["A", "B", "C"].includes(q.criterion)) throw new Error("criterion must be A, B, or C");
+    if (!["A", "B", "C", "D"].includes(q.criterion)) throw new Error("criterion must be A, B, C, or D");
     if (q.type !== "input") throw new Error('type must be "input"');
     if (q.plotly_spec != null && typeof q.plotly_spec === "object") {
         try {
@@ -1621,9 +1624,9 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     return (
         "\n\nHard requirements (Qwen-compatible JSON):\n" +
         '- type must be the string "input".\n' +
-        '- criterion must be one of "A", "B", "C" (targeted by the prompt).\n' +
+        '- criterion must be one of "A", "B", "C", "D" (same letter as MYP criterion focus in the prompt).\n' +
         "- expected_answer: the canonical final answer as a short string (may include LaTeX).\n" +
-        "- success_criteria: 2–5 bullet points (as a single string) describing what earns full credit for the targeted criterion.\n" +
+        "- success_criteria: 2–5 bullet points (as a single string). Each bullet must describe text evidence that would justify achievement levels 7–8 for the targeted criterion letter ONLY. Do not bundle other criteria into these bullets.\n" +
         '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes; never a raw object at this key. If "", do not mention any graph/chart/visual in text or ideal_explanation. If not "", include real numeric trace data so a chart can render (e.g. scatter with numeric "x" and "y").\n' +
         "- Curriculum: keep within IB MYP Year 7–8 scope and obey the band indicated in the prompt; avoid calculus/trig/logs/quadratic formula.\n" +
         '- REQUIRED: If text or ideal_explanation mentions marbles, apples, cookies, toys, a bag/box/jar, "gave"/"take away"/"started with"/"how many left"/"in all" or similar quantity stories, plotly_spec MUST NOT be "". Use a number-line scatter (y all 0) or a bar chart with numeric heights.\n' +
@@ -1787,7 +1790,17 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
 
 export async function evaluateTextAnswer({ question, studentResponse }) {
     try {
-        return await gradeResponseViaDashScope({ question, studentResponse });
+        const difficultyLabel =
+            state.currentLevel <= 3 ? "Foundations" : state.currentLevel <= 6 ? "IB MYP Year 7" : "IB MYP Year 8";
+        return await runDashScopeJudge({
+            question,
+            studentResponse,
+            difficultyLabel,
+            fetchWithBackoff,
+            getConfiguredAiKeys,
+            dashscopeChatCompletionsUrl,
+            debugLogAiPrompt
+        });
     } catch (e) {
         console.warn("evaluateTextAnswer: falling back to local judge", e);
         return localFallbackJudge({ question, studentResponse });
