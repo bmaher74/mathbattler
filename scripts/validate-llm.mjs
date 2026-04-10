@@ -46,7 +46,15 @@ function loadRootDotEnv() {
 }
 
 function parseArgs(argv) {
-    const out = { smoke: true, question: false, config: null, help: false };
+    const out = {
+        smoke: true,
+        question: false,
+        config: null,
+        help: false,
+        marbles: false,
+        requirePlot: false,
+        printJson: false
+    };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--help" || a === "-h") out.help = true;
@@ -61,6 +69,12 @@ function parseArgs(argv) {
         } else if (a === "--both") {
             out.smoke = true;
             out.question = true;
+        } else if (a === "--marbles") {
+            out.marbles = true;
+        } else if (a === "--require-plot") {
+            out.requirePlot = true;
+        } else if (a === "--print-json") {
+            out.printJson = true;
         }
     }
     return out;
@@ -117,12 +131,43 @@ function parseModelJsonContent(content) {
     return JSON.parse(s);
 }
 
+/**
+ * Normalize common LLM LaTeX currency glitches like `$\$15$` or `$ \$ 15 $`.
+ * Keep dollars out of math mode to avoid edge-case MathJax parsing issues.
+ */
+function normalizeLatexCurrency(s) {
+    if (s == null) return s;
+    let out = String(s);
+    out = out.replace(/\$\s*\\\$\s*([0-9]+(?:\.[0-9]+)?)\s*\$/g, (_, amt) => `\\$${amt}`);
+    out = out.replace(/\$\s*\$\s*([0-9]+(?:\.[0-9]+)?)\s*\$/g, (_, amt) => `\\$${amt}`);
+    return out;
+}
+
+function parsePlotlySpec(raw) {
+    if (!raw || typeof raw !== "string" || !raw.trim()) return null;
+    try {
+        const spec = JSON.parse(raw);
+        const data = Array.isArray(spec.data) ? spec.data : null;
+        if (!data || !data.length) return null;
+        return {
+            data,
+            layout: typeof spec.layout === "object" && spec.layout !== null ? spec.layout : {}
+        };
+    } catch (_) {
+        return null;
+    }
+}
+
 function validateQuestionPayload(q) {
     if (!q || typeof q !== "object") throw new Error("invalid question");
     const need = ["text", "answer", "ideal_explanation", "type", "options"];
     for (const k of need) {
         if (q[k] == null || q[k] === "") throw new Error("missing " + k);
     }
+    q.text = normalizeLatexCurrency(q.text);
+    q.ideal_explanation = normalizeLatexCurrency(q.ideal_explanation);
+    q.answer = normalizeLatexCurrency(q.answer);
+    if (Array.isArray(q.options)) q.options = q.options.map((o) => normalizeLatexCurrency(o));
     if (!Array.isArray(q.options) || q.options.length !== 4) throw new Error("options must be exactly 4 strings");
     for (let i = 0; i < q.options.length; i++) {
         if (q.options[i] == null || String(q.options[i]).trim() === "") throw new Error("empty option");
@@ -244,8 +289,15 @@ const DASHSCOPE_MCQ_USER_SUFFIX =
 async function questionDashScope(cfg) {
     const url = dashscopeChatUrl(cfg);
     const modelId = cfg.dsModel;
-    const basePrompt = `[SEED: ${Date.now()}] Generate a unique introductory Algebra math question. Return JSON ONLY. Use LaTeX in the question text. ideal_explanation: explain like to a smart 10-year-old. Do not mention charts/visuals unless plotly_spec is a non-empty valid Plotly JSON string with numeric plot data. If you use marbles, bags, apples, or similar addition/subtraction stories, plotly_spec MUST be non-empty (number line or bars).`;
-    const userContent = basePrompt + DASHSCOPE_MCQ_USER_SUFFIX;
+    const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+    const basePromptCommon =
+        `[SEED: ${Date.now()}] [NONCE: ${nonce}] Generate a unique introductory Algebra math question. Return JSON ONLY. ` +
+        `Use LaTeX in the question text. ideal_explanation: explain like to a smart 10-year-old. ` +
+        `Do not mention charts/visuals unless plotly_spec is a non-empty valid Plotly JSON string with numeric plot data. ` +
+        `If you use marbles, bags, apples, or similar addition/subtraction stories, plotly_spec MUST be non-empty (number line or bars).`;
+    const marbleOverride =
+        `\n\nFOR THIS TEST: Make it a marbles addition/subtraction story (e.g., start + change = end), and you MUST include a number-line Plotly chart in plotly_spec.`;
+    const userContent = basePromptCommon + (cfg.__cli_marbles ? marbleOverride : "") + DASHSCOPE_MCQ_USER_SUFFIX;
     const headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${cfg.dsKey}`
@@ -288,7 +340,18 @@ async function questionDashScope(cfg) {
     const content = data?.choices?.[0]?.message?.content;
     const parsed = parseModelJsonContent(content);
     validateQuestionPayload(parsed);
-    return { modelId, topic: parsed.topic_category, textPreview: String(parsed.text).slice(0, 80) };
+    const parsedPlot = parsePlotlySpec(parsed.plotly_spec);
+    if (cfg.__cli_requirePlot && !parsedPlot) {
+        throw new Error("plotly_spec missing/invalid but --require-plot was set");
+    }
+    return {
+        modelId,
+        topic: parsed.topic_category,
+        text: String(parsed.text),
+        plotlySpec: String(parsed.plotly_spec || ""),
+        hasValidPlotly: !!parsedPlot,
+        full: parsed
+    };
 }
 
 function printHelp() {
@@ -303,11 +366,15 @@ DASHSCOPE_MODEL, DASHSCOPE_CHAT_COMPLETIONS_URL
   --question   Full MCQ generation + same validation as the game
   --both       Run smoke then question
   --config PATH
+  --marbles         Force a marbles add/sub story (for plot testing)
+  --require-plot    Fail unless plotly_spec parses as valid Plotly JSON
+  --print-json      Print the full MCQ JSON (includes plotly_spec)
 
 Examples:
   npm run validate-llm
   npm run validate-llm -- --question
   npm run validate-llm -- --config ./ai-config.js --both
+  npm run validate-llm -- --question --marbles --require-plot --print-json
 `);
 }
 
@@ -343,11 +410,18 @@ async function main() {
         }
 
         if (runQuestion) {
+            cfg.__cli_marbles = !!args.marbles;
+            cfg.__cli_requirePlot = !!args.requirePlot;
             const r = await questionDashScope(cfg);
             console.log("PASS: DashScope question OK");
             console.log("  Model:", r.modelId);
             console.log("  Topic:", r.topic);
-            console.log("  Text:", r.textPreview + (r.textPreview.length >= 80 ? "…" : ""));
+            console.log("  Has valid Plotly:", r.hasValidPlotly ? "yes" : "no");
+            console.log("  plotly_spec chars:", r.plotlySpec.length);
+            console.log("  Text:", r.text.slice(0, 120) + (r.text.length > 120 ? "…" : ""));
+            if (args.printJson) {
+                console.log("\n--- FULL MCQ JSON ---\n" + JSON.stringify(r.full, null, 2));
+            }
         }
     } catch (e) {
         let msg = e && e.message ? e.message : String(e);
