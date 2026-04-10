@@ -1451,6 +1451,8 @@ function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
     const criterionCycle = ["A", "B", "C", "D"];
     const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
     const enemyName = String(getQuestNode(state.currentLevel)?.name || "Enemy");
+    const heroName = String(state.playerName || "").trim();
+    const heroNameJson = heroName ? JSON.stringify(heroName) : "";
     if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
     ensureCanonicalSkillTopicsInPlace(state.skillProfile);
     const retentionTopic = pickRetentionTopic(state.skillProfile);
@@ -1491,6 +1493,7 @@ Role: You are an expert IB Middle Years Programme (MYP) Math Examiner acting as 
 
 Current Combat Parameters:
 - Enemy Name: ${enemyName}
+- Student hero name (profile / level character — use in the opening taunt): ${heroNameJson ? heroNameJson : "(not set — taunt in second person only; do not invent a name)"}
 - Map level (progression gate): ${state.currentLevel}
 - MYP criterion focus: ${targetCriterion} (A: knowing & understanding — facts, procedures; B: investigating patterns — rules, generalisation, justification; C: communicating — representations and clear mathematical language in text; D: applying in real-life contexts — modelling, assumptions, interpretation, reasonableness)
 
@@ -1524,7 +1527,7 @@ LAYER 2 — Novel for the student (use your full training freely; stay inside MY
 - Optional sparks (mood board only; not a script—the app does not read these as data). If you have a fresher idea, use it instead:
   - Setting / mood spark: ${contextSeed}
   - Taunt delivery spark: ${dmDeliveryNudge}
-- The "text" field MUST contain two clear parts in order: (1) The Taunt — short, slightly arrogant or dramatic, math-themed challenge from ${enemyName} or the scene (ages 11–13). (2) The Task — the actual math question, plainly stated so a student knows what to answer. Do not bury the math in confusion unless the topic is genuinely Real-Life Modeling and the task is still unambiguous.
+- The "text" field MUST contain two clear parts in order: (1) The Taunt — short, slightly arrogant or dramatic, math-themed challenge from ${enemyName} or the scene (ages 11–13). ${heroNameJson ? `Address the hero by name at least once in the taunt where it sounds natural (name: ${heroNameJson}).` : "Address the player as you/your; no name was provided."} (2) The Task — the actual math question, plainly stated so a student knows what to answer. Do not bury the math in confusion unless the topic is genuinely Real-Life Modeling and the task is still unambiguous.
 - Taunt + task should read as one mini-quest, not two pasted paragraphs. Prefer specific invented details over generic filler (e.g. tired “Monday morning bus” tropes unless travel/timetable math truly fits).
 - Vary mathematical surface form when it suits the criterion: simplify, solve, determine, model with an equation, interpret a tiny table or description, justify a pattern (especially for B). For Criterion D, use believable messy numbers, budgets, distances, schedules, or measurements; ask for interpretation ("does this make sense?"), an explicit assumption, or a limitation of the model when it fits the band. Avoid repeating the same story skeleton every time; skip marble-bag clichés unless appropriate—and then include the required chart.
 

@@ -1348,6 +1348,8 @@ function responseNeedsNonEmptyPlotlyChart(q) {
     const criterionCycle = ["A", "B", "C", "D"];
     const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
     const enemyName = String(getQuestNode(state.currentLevel)?.name || "Enemy");
+    const heroName = String(state.playerName || "").trim();
+    const heroNameJson = heroName ? JSON.stringify(heroName) : "";
     const contextSeeds = [
         "sports practice (scores, laps, training plan)",
         "shopping/budget (discounts, tax, unit price)",
@@ -1405,13 +1407,14 @@ Current Combat Parameters:
 - Difficulty: ${diff}
 - Topic: ${chosenTopic}
 - Enemy Name: ${enemyName}
+- Student hero name (profile / level character — use in the opening taunt): ${heroNameJson ? heroNameJson : "(not set — taunt in second person only; do not invent a name)"}
 - MYP criterion focus: ${targetCriterion} (A: knowing & understanding; B: investigating patterns; C: communicating in text; D: applying in real-life contexts — modelling, assumptions, interpretation, reasonableness)
 
 Task: Generate 1 unique, rigorous MYP-aligned math question based on the topic and difficulty. criterion in JSON must be "${targetCriterion}".
 
 Tone & Narrative (CRITICAL):
 - The question "text" MUST be formatted in two parts:
-  1) The Taunt: a short, slightly arrogant, math-themed insult/challenge spoken by the enemy (appeal to ages 11–13).
+  1) The Taunt: a short, slightly arrogant, math-themed insult/challenge spoken by the enemy (appeal to ages 11–13). ${heroNameJson ? `Address the hero by name at least once where natural (name: ${heroNameJson}).` : "Use second person (you/your); no hero name was provided."}
   2) The Equation/Problem: the actual math question immediately after, stated clearly. Do NOT hide the math in a confusing word problem unless the topic is Real-Life Modeling.
 
 Technical & Formatting Constraints:
