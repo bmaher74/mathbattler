@@ -8,6 +8,12 @@ export const state = {
     enemyHP: 100,
     isAnimating: false,
     turnIndex: 0,
+    /**
+     * Monotonic counter for CANONICAL_SKILL_TOPICS rotation (persisted in profile).
+     * Unlike turnIndex (advances on graded cast), this advances once per combat question prompt build so
+     * prefetch / reload does not always start on Algebra.
+     */
+    strandRotationSeq: 0,
     skillProfile: null,
     nextQuestion: null,
     activeQuestion: null,
@@ -156,9 +162,30 @@ export function saveRecentStems() {
 
 export function normalizeQuestionStem(t) {
     return (t == null ? "" : String(t))
+        .replace(/[\u200b-\u200d\ufeff]/g, "")
         .replace(/\s+/g, " ")
         .trim()
         .toLowerCase();
+}
+
+/** Sorted digit-tokens for deduping reworded clones (same story numbers, different prose). */
+export function stemNumberMultisetKey(t) {
+    const m = String(t || "").match(/\d+/g);
+    if (!m || m.length === 0) return "";
+    const nums = m.map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n) && n >= 0);
+    nums.sort((a, b) => a - b);
+    return nums.join(",");
+}
+
+/**
+ * True when two stems mention the same multiset of integers (order ignored) with enough values to matter.
+ * Catches e.g. two "different" moat problems both using 45/30/150/600.
+ */
+export function stemsShareHeavyNumberMultiset(a, b, minCount = 4) {
+    const ka = stemNumberMultisetKey(a);
+    const kb = stemNumberMultisetKey(b);
+    if (!ka || ka !== kb) return false;
+    return ka.split(",").length >= minCount;
 }
 
 export function rememberQuestionStem(text) {

@@ -11,7 +11,8 @@ function harmonizeBandWithScore(band, score) {
     const s = Math.max(0, Math.min(8, Math.trunc(score)));
     let b = band;
     if (s >= 7) {
-        if (b === "incorrect" || b === "partial" || b === "correct_no_reasoning") b = "correct_with_reasoning";
+        // Never upgrade "answer only" to full credit: levels 7–8 require visible reasoning (see SCORE_TO_BAND_RULES).
+        if (b === "incorrect" || b === "partial") b = "correct_with_reasoning";
     } else if (s >= 5) {
         if (b === "incorrect") b = "partial";
         if (b === "correct_with_reasoning") b = "correct_no_reasoning";
@@ -32,9 +33,12 @@ export function finalizeJudgeResult(j) {
         ? j.next_steps.map((s) => sanitizeLlmProseString(String(s || "").trim())).filter(Boolean).slice(0, 3)
         : [];
     const scoreRaw = j.score;
-    const score =
+    let score =
         scoreRaw == null || !Number.isFinite(scoreRaw) ? null : Math.max(0, Math.min(8, Math.trunc(Number(scoreRaw))));
     let band = j.band;
+    if (band === "correct_no_reasoning" && score != null && score > 6) {
+        score = 6;
+    }
     band = harmonizeBandWithScore(band, score);
 
     const isCorrect = !!j.isCorrect;

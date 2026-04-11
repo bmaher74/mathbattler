@@ -55,11 +55,14 @@ describe("parseAndValidate", () => {
 
 describe("CombatQuestionSchema", () => {
     const minimal = {
+        _thought_process: "",
         criterion: "a",
         text: "Compute $2+2$.",
         expected_answer: "4",
         success_criteria: "Must state 4.",
         ideal_explanation: "Add the numbers.",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     };
 
@@ -70,15 +73,93 @@ describe("CombatQuestionSchema", () => {
     });
 
     it("finalizes without throwing for clean payload", () => {
-        const r = CombatQuestionSchema.safeParse({ ...minimal, plotly_spec: "" });
+        const r = CombatQuestionSchema.safeParse({ ...minimal });
         assert.equal(r.success, true);
         assert.doesNotThrow(() => finalizeCombatQuestion({ ...r.data }));
+    });
+
+    it("finalizeCombatQuestion strips _thought_process (not for player UI)", () => {
+        const r = CombatQuestionSchema.safeParse({
+            ...minimal,
+            _thought_process: "scratch: try 2+2=4"
+        });
+        assert.equal(r.success, true);
+        const q = { ...r.data };
+        finalizeCombatQuestion(q);
+        assert.equal(q._thought_process, undefined);
     });
 
     it("accepts criterion D", () => {
         const r = CombatQuestionSchema.safeParse({ ...minimal, criterion: "d" });
         assert.equal(r.success, true);
         assert.equal(r.data.criterion, "D");
+    });
+
+    it("maps legacy visual_spec to svg_spec in preprocess", () => {
+        const raw = {
+            criterion: "a",
+            text: "Hi",
+            expected_answer: "1",
+            success_criteria: "- ok",
+            ideal_explanation: "ok",
+            visual_type: "svg",
+            visual_spec: "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='10' fill='none'/></svg>",
+            type: "input"
+        };
+        const r = CombatQuestionSchema.safeParse(raw);
+        assert.equal(r.success, true);
+        assert.equal(r.data.svg_spec.includes("circle"), true);
+        assert.equal(r.data.visual_spec, undefined);
+    });
+
+    it("maps criterion_letter to criterion (model alias drift)", () => {
+        const r = CombatQuestionSchema.safeParse({
+            _thought_process: "",
+            criterion_letter: "A",
+            topic_category: "Algebra",
+            text: "Compute \\(2+2\\).",
+            expected_answer: "4",
+            success_criteria: "- ok",
+            ideal_explanation: "Add.",
+            visual_type: "none",
+            svg_spec: "",
+            type: "input"
+        });
+        assert.equal(r.success, true);
+        assert.equal(r.data.criterion, "A");
+    });
+
+    it("accepts text_blocks instead of text", () => {
+        const r = CombatQuestionSchema.safeParse({
+            criterion: "a",
+            text_blocks: [
+                { type: "prose", content: "Cost is $5. Solve " },
+                { type: "inline_math", latex: "x+1=2" }
+            ],
+            expected_answer: "1",
+            success_criteria: "- ok",
+            ideal_explanation: "Subtract.",
+            type: "input"
+        });
+        assert.equal(r.success, true);
+        assert.ok(r.data.text === undefined || r.data.text === "");
+        const q = { ...r.data };
+        finalizeCombatQuestion(q);
+        assert.ok(String(q.text).includes("$5"));
+        assert.ok(String(q.text).includes("\\(x+1=2\\)"));
+    });
+
+    it("rejects both text and text_blocks", () => {
+        const r = CombatQuestionSchema.safeParse({
+            criterion: "a",
+            text: "Hi",
+            text_blocks: [{ type: "prose", content: "Hi" }],
+            expected_answer: "1",
+            success_criteria: "- ok",
+            ideal_explanation: "ok",
+            type: "input"
+        });
+        assert.equal(r.success, false);
     });
 });
 
@@ -166,6 +247,22 @@ describe("finalizeJudgeResult", () => {
         });
         assert.equal(out.isCrit, false);
     });
+
+    it("does not upgrade correct_no_reasoning to full credit when the model over-scores", () => {
+        const out = finalizeJudgeResult({
+            band: "correct_no_reasoning",
+            isCorrect: true,
+            score: 8,
+            isCrit: true,
+            extracted_final_answer: "30",
+            feedback: "What you did well: x\nTo score higher next time:\n- y\nExample sentence starter: z",
+            strengths: [],
+            next_steps: []
+        });
+        assert.equal(out.band, "correct_no_reasoning");
+        assert.equal(out.score, 6);
+        assert.equal(out.isCrit, false);
+    });
 });
 
 describe("BossMetaSchema", () => {
@@ -232,21 +329,44 @@ describe("llmProseSanitize / accidental math wrapping", () => {
         assert.ok(!/^\$/m.test(s.trim()));
     });
 
-    it("sanitizeLlmProseString does not convert paired $...$ to \\(...\\) (prompt must avoid $ math pairs)", () => {
-        assert.ok(sanitizeLlmProseString("Solve $x+1$.").includes("$x+1$"));
+    it("sanitizeLlmProseString rewrites paired dollar math to \\(...\\)", () => {
+        assert.ok(sanitizeLlmProseString("Solve $x+1$.").includes("\\(x+1\\)"));
     });
 
     it("sanitizeLlmProseString leaves unpaired currency dollars", () => {
         assert.ok(sanitizeLlmProseString("Only $5 per ticket.").includes("$5"));
     });
 
-    it("sanitizeLlmProseString passes through model-bad paired money ($0.50$) unchanged", () => {
+    it("sanitizeLlmProseString collapses paired numeric money $n$ to a single $n (not math)", () => {
         const paired = sanitizeLlmProseString("Each cup costs $0.50$ to make and sells for $1.25$.");
-        assert.ok(paired.includes("$0.50$"));
-        assert.ok(paired.includes("$1.25$"));
+        assert.ok(paired.includes("$0.50"));
+        assert.ok(paired.includes("$1.25"));
         assert.ok(!paired.includes("\\(0.50\\)"));
         const unpaired = sanitizeLlmProseString("Each cup costs $0.50 per cup before tax.");
         assert.ok(unpaired.includes("$0.50"));
+    });
+
+    it("sanitizeLlmProseString does not pair currency $n with a later math $ (multiple $ on one line)", () => {
+        const s = sanitizeLlmProseString("Costs $5 and solve $x+1=0$ for $x$.");
+        assert.ok(s.includes("$5"));
+        assert.ok(s.includes("\\(x+1=0\\)"));
+        assert.ok(s.includes("\\(x\\)"));
+        assert.ok(!s.includes("\\(5 and solve"), "must not treat $5 and solve ... $ as one math span");
+    });
+
+    it("sanitizeLlmProseString treats $14x as math, not currency $14 + x", () => {
+        const s = sanitizeLlmProseString("Equation $14x = 8.50x + 30$.");
+        assert.ok(s.includes("\\(14x = 8.50x + 30\\)"));
+        assert.ok(!s.includes("$14x"));
+    });
+
+    it("sanitizeLlmProseString keeps several currency amounts on one line (no bogus $…$ pairing)", () => {
+        const s = sanitizeLlmProseString(
+            "I sell at $14 per item. At the rival it is $8.50 per item with a $30 fee."
+        );
+        assert.ok(s.includes("$14"), s);
+        assert.ok(s.includes("$8.50"), s);
+        assert.ok(s.includes("$30"), s);
     });
 });
 

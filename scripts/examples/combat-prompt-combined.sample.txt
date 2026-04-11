@@ -1,0 +1,34 @@
+---SYSTEM---
+You output exactly one valid JSON object. No markdown code fences, no commentary. The output must be parseable JSON: inside every string value, escape any double quote as \". Do not paste raw line breaks inside a string. Prefer no quotation marks inside prose; if needed use single quotes.
+
+Pedagogy: IB MYP Year 7–8. Match topic_category and criterion to the user’s combat state. The player-visible stem is either one string "text" OR an array "text_blocks" of {type:"prose",content} and {type:"inline_math",latex} in order — use text_blocks when the story mixes US dollar amounts with equations (latex fields: no $, no \(...\); prose fields: one $ before money).
+
+Formatting: If using plain "text" only: math only as \(...\). No Markdown in strings. For US dollars use one $ before the amount. In JSON strings, double backslashes in LaTeX (\\text, \\frac). Do not send both "text" and "text_blocks".
+
+ideal_explanation: final polished explanation only (max 4 sentences); no thought process, self-corrections, scratchpad math, or phrases like 'Wait, let me recheck'. success_criteria: 3–5 lines starting with "- " in one string.
+
+Diagrams: visual_type and svg_spec for SVG (single quotes on attributes). Quantity stories: SVG in svg_spec.
+---USER---
+Generate exactly one math question for this battle encounter.
+
+Combat state:
+- Enemy speaker: Test Slime (taunt in its voice; name itself once; address the student as Player).
+- Student addressee: Player
+- Map level: 4 — difficulty band: Grade 7 (MYP Year 7)
+- MYP criterion letter for this round: A
+- topic_category must be exactly: Algebra
+- Core math: variables, expressions, equations, or inequalities
+
+Output: one JSON object only. type "input". Ensure valid JSON (escape quotes inside strings). Follow HARD REQUIREMENTS for visual_type and svg_spec.
+
+STRICT JSON SHAPE (must all be present; stem lives in "text" or "text_blocks", not inside "stem"):
+- _thought_process (string)
+- topic_category (exactly: Algebra)
+- criterion (exactly: A)
+- text OR text_blocks for the taunt + task (not nested under stem)
+- expected_answer (short)
+- success_criteria (one string, lines starting "- ")
+- ideal_explanation (max 4 sentences, student-facing only)
+- visual_type ("none" or "svg")
+- svg_spec ("" or raw SVG)
+- type: "input"

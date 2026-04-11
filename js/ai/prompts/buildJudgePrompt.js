@@ -25,6 +25,7 @@ export function buildJudgePrompt({ question, studentResponse, difficultyLabel })
         `EXPECTED_ANSWER (canonical guide): ${JSON.stringify(expected)}\n` +
         `SUCCESS_CRITERIA (full credit / what to look for): ${JSON.stringify(success)}\n` +
         `STUDENT_RESPONSE: ${JSON.stringify(studentResponse)}\n\n` +
+        `Answer-only responses: If the student gives only a final value (or a single word/number) with no visible reasoning, steps, or explanation of method, use band "correct_no_reasoning" and score at most 6 — never "correct_with_reasoning" and never score 7 or 8. A bare correct answer is not "excellent communication" or "thorough investigation."\n\n` +
         `Marking procedure (examiner order):\n` +
         `1) Understand the task and SUCCESS_CRITERIA.\n` +
         `2) Evaluate mathematics and reasoning against SUCCESS_CRITERIA and EXPECTED_ANSWER.\n` +

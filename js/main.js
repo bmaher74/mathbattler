@@ -15,6 +15,7 @@ import {
     rememberQuestionStem,
     MAX_RECENT_STEMS,
     normalizeQuestionStem,
+    stemsShareHeavyNumberMultiset,
     RECENT_STEMS_LS_KEY,
     BOSS_CACHE_LS_KEY,
     BOSS_CACHE_SCHEMA_VERSION
@@ -35,13 +36,27 @@ import { finalizePracticeMcq } from "./ai/finalizePracticeMcq.js";
 import { runDashScopeJudge } from "./ai/runDashScopeJudge.js";
 import { localFallbackJudge } from "./ai/localFallbackJudge.js";
 import { sanitizeLlmProseString } from "./ai/llmProseSanitize.js";
-import { LLM_NO_MARKDOWN_IN_STRINGS, PROMPT_VERSION } from "./ai/prompts/contract.js";
+import { LLM_NO_MARKDOWN_IN_STRINGS } from "./ai/prompts/contract.js";
+import { getCombatQuestionSystemPrompt } from "./ai/prompts/combatQuestionSystem.js";
+import { combatQuestionJsonSchemaResponseFormat } from "./ai/prompts/combatQuestionJsonSchema.js";
 import {
     MATH_BATTLE_CONTEXT_SEEDS,
     MATH_BATTLE_DM_DELIVERY_NUDGES,
     pickSeededIndex
 } from "./ai/prompts/mathBattleSeeds.js";
-import { parsePlotlySpec, responseNeedsNonEmptyPlotlyChart, synthesizeQuantityStoryPlotlySpec } from "./ai/plotlyQuestionHeuristics.js";
+import {
+    normalizeSkillProfile,
+    mergeSkillProfiles,
+    ensureCanonicalSkillTopicsInPlace,
+    canonicalizeReportedTopic,
+    buildCombatQuestionUserPrompt
+} from "./ai/prompts/combatQuestionPedagogy.js";
+import { parsePlotlySpec, combatQuestionRequiresSvgDiagram } from "./ai/plotlyQuestionHeuristics.js";
+import {
+    hasRenderableCombatSvg,
+    mountCombatVisualSvg,
+    clearCombatVisualMount
+} from "./ai/combatVisualSvg.js";
 
 let practiceActiveQuestion = null;
 let practiceMcqFetchGeneration = 0;
@@ -295,104 +310,13 @@ function safeProfileDocId(displayName) {
             cosmeticsTier: typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0,
             bestiary: Array.isArray(state.bestiary) ? state.bestiary.slice(0, 200) : [],
             bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {},
-            engagement: engagementSnapshotFromState()
+            engagement: engagementSnapshotFromState(),
+            strandRotationSeq:
+                typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
+                    ? Math.floor(state.strandRotationSeq)
+                    : 0
         }));
     } catch (e) { console.warn("saveLocalProfile", e); }
-}
- function normalizeSkillProfile(raw) {
-    const fallback = { "Algebra": { attempts: 0, corrects: 0 } };
-    if (!raw || typeof raw !== "object") return fallback;
-    const out = {};
-    for (const [topic, v] of Object.entries(raw)) {
-        if (v && typeof v === "object") {
-            out[topic] = {
-                attempts: typeof v.attempts === "number" ? v.attempts : (typeof v.a === "number" ? v.a : 0),
-                corrects: typeof v.corrects === "number" ? v.corrects : (typeof v.c === "number" ? v.c : 0)
-            };
-        }
-    }
-    return Object.keys(out).length ? out : fallback;
-}
- function mergeSkillProfiles(a, b) {
-    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-    const out = {};
-    for (const k of keys) {
-        const va = a[k] || { attempts: 0, corrects: 0 };
-        const vb = b[k] || { attempts: 0, corrects: 0 };
-        out[k] = {
-            attempts: Math.max(va.attempts ?? 0, vb.attempts ?? 0),
-            corrects: Math.max(va.corrects ?? 0, vb.corrects ?? 0)
-        };
-    }
-    return Object.keys(out).length ? out : { "Algebra": { attempts: 0, corrects: 0 } };
-}
- /** Strands used for topic interleaving (must stay in sync with question prompts). */
-const CANONICAL_SKILL_TOPICS = [
-    "Algebra",
-    "Arithmetic",
-    "Geometry",
-    "Fractions & Percent",
-    "Patterns & Sequences",
-    "Data & Probability",
-    "Real-Life Modeling"
-];
-/** Until each strand has this many attempts, prefer it for "retention" picks (exploration). */
-const SKILL_TOPIC_MIN_SAMPLES = 3;
- function ensureCanonicalSkillTopicsInPlace(skillProfile) {
-    if (!skillProfile || typeof skillProfile !== "object") return;
-    for (const t of CANONICAL_SKILL_TOPICS) {
-        if (!skillProfile[t]) skillProfile[t] = { attempts: 0, corrects: 0 };
-    }
-}
- /** Map model / legacy labels onto CANONICAL_SKILL_TOPICS for stable stats. */
-function canonicalizeReportedTopic(raw) {
-    const s = String(raw ?? "").trim();
-    const sl = s.toLowerCase().replace(/\s+/g, " ");
-    if (!sl || sl === "math") return "Arithmetic";
-    for (const c of CANONICAL_SKILL_TOPICS) {
-        if (sl === c.toLowerCase()) return c;
-    }
-    if (sl.includes("pattern") || sl.includes("sequence") || sl.includes("nth term")) return "Patterns & Sequences";
-    if (sl.includes("fraction") || sl.includes("percent") || sl.includes("ratio") || sl.includes("decimal")) {
-        return "Fractions & Percent";
-    }
-    if (sl.includes("geometry") || sl.includes("shape") || sl.includes("perimeter") || sl.includes("area")) return "Geometry";
-    if (sl.includes("data") || sl.includes("probability") || sl.includes("mean") || sl.includes("median")) {
-        return "Data & Probability";
-    }
-    if (sl.includes("graph") && (sl.includes("data") || sl.includes("bar") || sl.includes("chart") || sl.includes("plot"))) {
-        return "Data & Probability";
-    }
-    if (sl.includes("model") || sl.includes("real-life") || sl.includes("real life")) return "Real-Life Modeling";
-    if (sl.includes("arithmetic") || sl.includes("order of operations") || sl.includes("integer")) return "Arithmetic";
-    if (sl.includes("algebra") || /\bequation\b/.test(sl)) return "Algebra";
-    return s.length > 40 ? s.slice(0, 40) : s;
-}
- /**
- * Retention focus: under-sampled strands first (so one topic cannot monopolize), else lowest success ratio.
- */
-function pickRetentionTopic(skillProfile) {
-    const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
-    ensureCanonicalSkillTopicsInPlace(sp);
-    const under = CANONICAL_SKILL_TOPICS.filter((t) => (sp[t]?.attempts || 0) < SKILL_TOPIC_MIN_SAMPLES);
-    if (under.length) return under[Math.floor(Math.random() * under.length)];
-    let best = CANONICAL_SKILL_TOPICS[0];
-    let bestRatio = 2;
-    for (const t of CANONICAL_SKILL_TOPICS) {
-        const d = sp[t];
-        if (!d || d.attempts < 1) continue;
-        const r = d.corrects / d.attempts;
-        if (r < bestRatio - 1e-9) {
-            bestRatio = r;
-            best = t;
-        }
-    }
-    if (bestRatio >= 2 - 1e-9) {
-        const under2 = CANONICAL_SKILL_TOPICS.filter((t) => (sp[t]?.attempts || 0) < SKILL_TOPIC_MIN_SAMPLES);
-        if (under2.length) return under2[Math.floor(Math.random() * under2.length)];
-        return CANONICAL_SKILL_TOPICS[Math.floor(Math.random() * CANONICAL_SKILL_TOPICS.length)];
-    }
-    return best;
 }
  function recordCombatSkillOutcome(question, judged) {
     if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
@@ -586,7 +510,21 @@ function mergeProfileRecords(cloudDoc, localDoc) {
         return out;
     })();
     const engagement = mergeEngagementRecords(c.engagement, l.engagement);
-    return { unlockedLevels, skillProfile, shards, cosmeticsTier, bestiary, bossCacheByLevel, engagement };
+    const srCloud =
+        typeof c.strandRotationSeq === "number" && c.strandRotationSeq >= 0 ? Math.floor(c.strandRotationSeq) : 0;
+    const srLocal =
+        typeof l.strandRotationSeq === "number" && l.strandRotationSeq >= 0 ? Math.floor(l.strandRotationSeq) : 0;
+    const strandRotationSeq = Math.max(srCloud, srLocal);
+    return {
+        unlockedLevels,
+        skillProfile,
+        shards,
+        cosmeticsTier,
+        bestiary,
+        bossCacheByLevel,
+        engagement,
+        strandRotationSeq
+    };
 }
 function engagementSnapshotFromState() {
     return normalizeEngagement(state.engagement);
@@ -819,6 +757,10 @@ function grantPracticeParticipationIfAllowed() {
             bestiary: Array.isArray(merged.bestiary) ? merged.bestiary : [],
             bossCacheByLevel: merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : {},
             engagement: normalizeEngagement(merged.engagement),
+            strandRotationSeq:
+                typeof merged.strandRotationSeq === "number" && merged.strandRotationSeq >= 0
+                    ? Math.floor(merged.strandRotationSeq)
+                    : 0,
             displayName: name,
             lastSyncedAt: Date.now()
         }, { merge: true });
@@ -848,6 +790,10 @@ async function syncCurrentProfileToCloud() {
             bestiary: Array.isArray(state.bestiary) ? state.bestiary.slice(0, 200) : [],
             bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {},
             engagement: engagementSnapshotFromState(),
+            strandRotationSeq:
+                typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
+                    ? Math.floor(state.strandRotationSeq)
+                    : 0,
             displayName: name,
             lastSyncedAt: Date.now()
         }, { merge: true });
@@ -892,7 +838,11 @@ async function reconcileProfileWithCloud() {
         cosmeticsTier: typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0,
         bestiary: Array.isArray(state.bestiary) ? state.bestiary : [],
         bossCacheByLevel: state.bossCacheByLevel && typeof state.bossCacheByLevel === "object" ? state.bossCacheByLevel : {},
-        engagement: engagementSnapshotFromState()
+        engagement: engagementSnapshotFromState(),
+        strandRotationSeq:
+            typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
+                ? Math.floor(state.strandRotationSeq)
+                : 0
     };
     const m1 = mergeProfileRecords(cloud, local);
     const merged = mergeProfileRecords(m1, session);
@@ -903,6 +853,10 @@ async function reconcileProfileWithCloud() {
     state.cosmeticsTier = merged.cosmeticsTier ?? 0;
     state.bestiary = Array.isArray(merged.bestiary) ? merged.bestiary : [];
     state.bossCacheByLevel = merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : state.bossCacheByLevel;
+    state.strandRotationSeq =
+        typeof merged.strandRotationSeq === "number" && merged.strandRotationSeq >= 0
+            ? Math.floor(merged.strandRotationSeq)
+            : 0;
     applyEngagementToState(merged.engagement);
     processEngagementLoginSession();
     ensureBestiaryMatchesUnlockedLevels();
@@ -913,7 +867,8 @@ async function reconcileProfileWithCloud() {
         skillProfile: state.skillProfile,
         bestiary: state.bestiary,
         bossCacheByLevel: state.bossCacheByLevel,
-        engagement: engagementSnapshotFromState()
+        engagement: engagementSnapshotFromState(),
+        strandRotationSeq: state.strandRotationSeq
     });
     const ls = document.getElementById("level-screen");
     if (ls && !ls.classList.contains("hidden")) {
@@ -1099,6 +1054,10 @@ async function initFirebase() {
     state.cosmeticsTier = merged.cosmeticsTier ?? 0;
     state.bestiary = Array.isArray(merged.bestiary) ? merged.bestiary : [];
     state.bossCacheByLevel = merged.bossCacheByLevel && typeof merged.bossCacheByLevel === "object" ? merged.bossCacheByLevel : state.bossCacheByLevel;
+    state.strandRotationSeq =
+        typeof merged.strandRotationSeq === "number" && merged.strandRotationSeq >= 0
+            ? Math.floor(merged.strandRotationSeq)
+            : 0;
     applyEngagementToState(merged.engagement);
     processEngagementLoginSession();
     ensureBestiaryMatchesUnlockedLevels();
@@ -1110,7 +1069,8 @@ async function initFirebase() {
             skillProfile: state.skillProfile,
             bestiary: state.bestiary,
             bossCacheByLevel: state.bossCacheByLevel,
-            engagement: engagementSnapshotFromState()
+            engagement: engagementSnapshotFromState(),
+            strandRotationSeq: state.strandRotationSeq
         });
     } else {
         state.lastCloudSyncAt = Date.now();
@@ -1343,6 +1303,8 @@ let prefetchPromiseForLevel = null;
 let prefetchRunId = 0;
 let prefetchInFlightCount = 0;
 let prefetchInFlight = false;
+/** Prevents concurrent loadQuestion runs from sharing one prefetch completion — only the first dequeue would get `nextQuestion`, the rest saw null and fell back to offline. */
+let loadQuestionInFlight = null;
  function clearPrefetchFailureUi() {
     state.aiOfflineHint = null;
     state.lastPrefetchError = null;
@@ -1741,7 +1703,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "7",
         success_criteria: "- Show the inverse operation.\n- Write the final value of \\(x\\).\n- Quick check by substituting back.",
         ideal_explanation: "Subtract \\(5\\) from both sides: \\(x = 12 - 5 = 7\\). Check: \\(7+5=12\\).",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1751,7 +1714,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "14",
         success_criteria: "- Use correct order of operations.\n- Show the intermediate multiplication.",
         ideal_explanation: "Multiply first: \\(3 \\times 4 = 12\\), then \\(2 + 12 = 14\\).",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1761,7 +1725,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "\\(\\frac{3}{4}\\)",
         success_criteria: "- Use a common denominator.\n- Combine numerators.\n- Simplify if needed.",
         ideal_explanation: "Use a common denominator: \\(\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}\\).",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1771,7 +1736,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "5",
         success_criteria: "- Correct subtraction.\n- Final statement.",
         ideal_explanation: "Subtract: \\(8 - 3 = 5\\).",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1781,7 +1747,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "16",
         success_criteria: "- State the perimeter rule.\n- Show multiplication.\n- Include units if given.",
         ideal_explanation: "Perimeter of a square is \\(4 \\times \\text{side} = 4 \\times 4 = 16\\).",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1791,180 +1758,43 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "3",
         success_criteria: "- Correct division.\n- Final statement.",
         ideal_explanation: "\\(9 \\div 3 = 3\\).",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     }
 ];
  function pickFallbackQuestion(excludeText) {
-    const norm = (t) => (t == null ? "" : String(t)).trim();
-    const ex = norm(excludeText);
-    const filtered = FALLBACK_QUESTIONS.filter((q) => norm(q.text) !== ex);
+    const ex = normalizeQuestionStem(excludeText);
+    const filtered = FALLBACK_QUESTIONS.filter((q) => normalizeQuestionStem(q.text) !== ex);
     const pool = filtered.length ? filtered : FALLBACK_QUESTIONS;
     const pick = pool[Math.floor(Math.random() * pool.length)];
     return { ...pick, _questionSource: "offline" };
-}
- function buildMypConstraintsBlock(level) {
-    const band =
-        level <= 3 ? "Foundations (early Year 7 readiness)" : level <= 6 ? "IB MYP Year 7" : "IB MYP Year 8";
-    const allowedByBand =
-        level <= 3
-            ? [
-                  "integer operations, order of operations, simple fractions/decimals/percent basics",
-                  "one-step and simple two-step linear equations in one variable",
-                  "simple patterns and substitution (evaluate an expression for a given value)",
-                  "simple perimeter/area with whole-number dimensions"
-              ]
-            : level <= 6
-              ? [
-                    "linear expressions and equations; solving and checking solutions",
-                    "fractions/decimals/percent conversions and problems in context",
-                    "ratio and rates (unit rate) with straightforward numbers",
-                    "basic geometry: perimeter/area; angle facts; simple coordinates"
-                ]
-              : [
-                    "multi-step linear equations; distributive property; combining like terms",
-                    "proportional relationships and percent change (increase/decrease) in context",
-                    "intro to functions as input/output; reading simple graphs (no advanced curve fitting)",
-                    "basic statistics: mean/median/mode; simple data displays and interpretation"
-                ];
-     const outOfScope = [
-        "calculus (derivatives/integrals/limits)",
-        "trigonometry (sin/cos/tan)",
-        "quadratic formula / completing the square as a main skill",
-        "simultaneous equations beyond very simple intuition",
-        "logarithms"
-    ];
-     return (
-        `\n\nCURRICULUM CONSTRAINTS (must follow):\n` +
-        `- Target band: ${band}. Use this level to set difficulty.\n` +
-        `- Keep the problem within IB MYP Year 7–8 scope. No “surprise” senior topics.\n` +
-        `- Allowed focus areas for this band: ${allowedByBand.join("; ")}.\n` +
-        `- Explicitly avoid: ${outOfScope.join(", ")}.\n` +
-        `- Use MYP-friendly command terms in the stem when natural (e.g., "solve", "calculate", "determine", "simplify").\n` +
-        `- Explanation quality (Rubicon-style): show the method clearly, include 1 quick check when possible, and keep the reading level ~age 12–14.\n`
-    );
-}
- /** Compact per-topic stats for the question LLM (retention / progression tuning). */
-function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
-    const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
-    ensureCanonicalSkillTopicsInPlace(sp);
-    const rows = Object.entries(sp).map(([topic, v]) => {
-        const a = typeof v?.attempts === "number" ? v.attempts : 0;
-        const c = typeof v?.corrects === "number" ? v.corrects : 0;
-        const ratio = a > 0 ? c / a : -1;
-        const pct = a > 0 ? Math.round((100 * c) / a) : null;
-        return { topic, a, c, ratio, pct };
-    });
-    rows.sort((x, y) => {
-        if (x.ratio < 0 && y.ratio >= 0) return 1;
-        if (y.ratio < 0 && x.ratio >= 0) return -1;
-        if (x.ratio < 0 && y.ratio < 0) return x.topic.localeCompare(y.topic);
-        return x.ratio - y.ratio;
-    });
-    const slice = rows.slice(0, maxTopics);
-    if (!slice.length) return "(no skill profile yet — default to Topic below)";
-    return slice.map((r) => `${r.topic}: ${r.c}/${r.a} correct${r.pct != null ? ` (${r.pct}%)` : ""}`).join("; ");
-}
- /** One line: what the math must look like for each strand (stops “everything is a wallet algebra” drift). */
-function strandShapeRequirement(topic) {
-    const t = String(topic || "");
-    const lines = {
-        Algebra:
-            "The core task must feature variables, expressions, equations, or inequalities (solve or manipulate symbols)—not merely a multi-step shopping tally with only arithmetic on named amounts.",
-        Arithmetic:
-            "The core task must feature integers, order of operations, factors/multiples, or mental calculation strategies. If there is a story, every payment or change uses the SAME unit and commodity as the starting amount (one currency/token name only).",
-        Geometry:
-            "The core task must feature lengths, angles, area, perimeter, coordinates, transformations, or shapes—geometry must be essential to the answer, not decoration.",
-        "Fractions & Percent":
-            "The core task must require fractions, ratios, percents, or decimal proportion reasoning as the main mathematical move (not just integers dressed as a story).",
-        "Patterns & Sequences":
-            "The core task must feature a sequence, table, or repeating rule; the student finds a pattern, next term, nth term, or justifies a rule—avoid unrelated percent-of-wallet chains.",
-        "Data & Probability":
-            "The core task must feature data (table, chart read-off, mean/median/range) or probability from counts/outcomes—statistics or chance must be central.",
-        "Real-Life Modeling":
-            "The core task must interpret a believable context with explicit assumptions; keep ONE consistent measure for each resource (e.g. all values in gold coins OR all in dollars—never subtract “dollars paid” from “coins held” without a stated exchange). Ask for reasonableness or a limitation when it fits the band."
-    };
-    return lines[t] || "Align the mathematics authentically with this strand.";
 }
  function buildMathQuestionPrompt(mapLevelOverride) {
     const mapLevel =
         Number.isFinite(mapLevelOverride) && mapLevelOverride >= 1
             ? Math.floor(mapLevelOverride)
             : state.currentLevel;
-    const easier = state.forceEasierNextQuestion === true;
-    const diff = easier ? "Introductory" : (mapLevel <= 3 ? "Introductory" : (mapLevel <= 6 ? "Grade 7" : "Grade 8"));
-    const difficultyFromLevel =
-        mapLevel <= 3 ? "Introductory (map levels 1–3)" : mapLevel <= 6 ? "Grade 7 (map levels 4–6)" : "Grade 8 (map level 7+)";
-    const difficultyCalculationLine = easier
-        ? `Difficulty label is Introductory because the player is on a remedial/easier question this round (potion or struggle path) — use Foundations-style tasks even if map level is ${mapLevel}.`
-        : `Difficulty label follows map level: level ${mapLevel} → ${difficultyFromLevel.split("(")[0].trim()}.`;
-    const criterionCycle = ["A", "B", "C", "D"];
-    const targetCriterion = criterionCycle[state.turnIndex % criterionCycle.length];
-    const enemyName = String(getQuestNode(mapLevel)?.name || "Enemy");
-    const heroName = String(state.playerName || "").trim();
-    const heroNameJson = heroName ? JSON.stringify(heroName) : "";
     if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
     ensureCanonicalSkillTopicsInPlace(state.skillProfile);
-    const retentionTopic = pickRetentionTopic(state.skillProfile);
-    const rotationTopic = CANONICAL_SKILL_TOPICS[state.turnIndex % CANONICAL_SKILL_TOPICS.length];
-    let chosenTopic;
-    let topicPedagogyExplanation;
-    if (Math.random() < 0.22) {
-        chosenTopic = retentionTopic;
-        topicPedagogyExplanation = `RETENTION (~22%): reinforce “${retentionTopic}” (under-sampled strands first until ${SKILL_TOPIC_MIN_SAMPLES} attempts each, then lowest success rate among strands with data).`;
-    } else {
-        chosenTopic = rotationTopic;
-        topicPedagogyExplanation = `ROTATION (default): strand is “${rotationTopic}” — cycles through all ${CANONICAL_SKILL_TOPICS.length} MYP strands by battle index so no single strand (including Algebra) can dominate.`;
-    }
-    const skillSnapshot = formatSkillSnapshotForPrompt(state.skillProfile);
-    const nonce =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-            ? crypto.randomUUID()
-            : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-    const contextSeed =
-        MATH_BATTLE_CONTEXT_SEEDS[pickSeededIndex(nonce, "ctx", MATH_BATTLE_CONTEXT_SEEDS.length)];
-    const dmDeliveryNudge =
-        MATH_BATTLE_DM_DELIVERY_NUDGES[
-            pickSeededIndex(nonce, "dm", MATH_BATTLE_DM_DELIVERY_NUDGES.length)
-        ];
-    let avoidPrior = "";
-    const prevStem = state.activeQuestion?.text;
-    if (prevStem && String(prevStem).trim()) {
-        const snippet = String(prevStem).trim().slice(0, 320);
-        avoidPrior = `\n\nThe player was just shown this stem — you must NOT repeat it, reuse the same numbers with different wording, or mirror its structure. Produce a clearly different problem:\n${JSON.stringify(snippet)}`;
-    }
-    const promptBody = `[PROMPT_VERSION ${PROMPT_VERSION}] [SEED: ${Date.now()}] [NONCE: ${nonce}]
-
-Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
-
-Combat (follow HARD REQUIREMENTS at the end for JSON keys and plotly rules):
-- Speaker (enemy): ${JSON.stringify(enemyName)} — taunt in their voice; name self at least once; never use the hero’s name as the monster’s identity.
-- Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
-- Map level: ${mapLevel} · Display difficulty: ${diff} (${difficultyCalculationLine})
-- MYP criterion this round: ${targetCriterion} (A facts/procedures · B patterns/generalisation · C clear math language · D modelling/context)
-- ${topicPedagogyExplanation}
-- Retention candidate when mode is RETENTION: ${retentionTopic}
-- topic_category for this question (verbatim): ${JSON.stringify(chosenTopic)} — syllabus label only, not ${JSON.stringify(enemyName)}’s name (no “Algebras” swarms).
-- Strand shape (math must match, not just the label): ${strandShapeRequirement(chosenTopic)}
-- Skill snapshot (scaffold weak / stretch strong; stay MYP): ${skillSnapshot}
-
-Pedagogy: Balance progression and retention. Honor Topic=${chosenTopic} at ${diff}; if ${chosenTopic} looks weak in the snapshot, keep one clear main move.
-
-Output: One rigorous MYP question. Machine rules (JSON, plotly, strings) win over flavor — but prefer an original stem over a generic one.
-
-Structure & content:
-- Single JSON object, no fences (details in HARD REQUIREMENTS). type "input", criterion "${targetCriterion}", no MCQ.
-- Word problems: one consistent unit/ledger end-to-end; expected_answer and ideal_explanation match that ledger.
-- Math in \\(...\\) only; currency like $5 once, not $5$; in JSON double backslashes in TeX (\\\\text, \\\\times, \\\\frac).
-- "text": (1) short in-character taunt per Speaker/Addressee above, then (2) the task, plain and answerable. One mini-quest, not two pasted blocks.
-- ideal_explanation: smart 10-year-old voice; formulas only in \\(...\\).
-- Plotly: if plotly_spec is "", never claim a chart/visual in prose. Quantity / object stories (bags, marbles, gave away, how many left, …) → non-empty plotly_spec with numeric traces; prefer bars x=["Start","Change","End"] with signed change, or a number-line scatter. If the math has a natural picture (equations, rates, geometry), include a minimal chart; use "" only when a graph adds nothing.
-
-Creative: Original scenario; optional sparks (not data): ${contextSeed} · ${dmDeliveryNudge}
-Vary task style with the criterion (solve, simplify, justify pattern, model, interpret). Skip tired marble-bag setups unless the topic needs them — then you must chart.
-${avoidPrior}
-${buildMypConstraintsBlock(state.forceEasierNextQuestion === true ? 1 : mapLevel)}`;
-    return { prompt: promptBody, chosenTopic, targetCriterion };
+    const strandSeq =
+        typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
+            ? Math.floor(state.strandRotationSeq)
+            : 0;
+    const bundle = buildCombatQuestionUserPrompt({
+        mapLevel,
+        forceEasierNextQuestion: state.forceEasierNextQuestion === true,
+        turnIndex: state.turnIndex,
+        skillProfile: state.skillProfile,
+        strandRotationSeq: strandSeq,
+        playerName: state.playerName,
+        enemyName: String(getQuestNode(mapLevel)?.name || "Enemy"),
+        activeQuestionText: state.activeQuestion?.text ?? null,
+        rng: Math.random
+    });
+    state.strandRotationSeq = bundle.nextStrandRotationSeq;
+    if (state.playerName) saveLocalProfile(state.playerName);
+    return { prompt: bundle.prompt, chosenTopic: bundle.chosenTopic, targetCriterion: bundle.targetCriterion };
 }
 function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     if (!q || !pedagogy || typeof pedagogy !== "object") return q;
@@ -2101,19 +1931,26 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
 }
  function dashScopeQuestionUserSuffix() {
     return (
-        "\n\nHARD REQUIREMENTS (Qwen JSON — follow exactly):\n" +
-        "- Return one JSON object with exactly these keys (no extras): topic_category, criterion, text, expected_answer, success_criteria, ideal_explanation, plotly_spec, type.\n" +
-        '- type must be "input". criterion must match the letter in the prompt (A/B/C/D).\n' +
-        "- expected_answer: short canonical answer (LaTeX OK); same units/ledger as the story.\n" +
-        "- success_criteria: one string with 2–5 lines starting \"- \"; each line = evidence for levels 7–8 for the prompt’s criterion letter only (do not mix in other criteria).\n" +
-        '- plotly_spec: always a string. Use "" OR a JSON-encoded Plotly spec (escaped quotes); never a raw object. If "", never mention graph/chart/visual in text or ideal_explanation. If not "", traces need numeric x/y (or bar heights). Object/quantity stories (bags, marbles, apples, gave away, how many left, in all, …) → plotly_spec MUST NOT be "" — use bars or a number-line scatter.\n' +
-        "- ideal_explanation: brief worked solution + quick check; readable for Year 7–8.\n" +
-        "- Scope: IB MYP Year 7–8 as in the prompt’s band; no calculus/trig/logs/quadratic formula as the main skill.\n" +
-        "- LaTeX in JSON: double every backslash in TeX (e.g. \\\\text, \\\\times, \\\\frac) or JSON will corrupt commands.\n" +
-        "\n" +
-        "String contract (all human-readable fields):\n" +
-        LLM_NO_MARKDOWN_IN_STRINGS +
-        "\n\nOutput only the JSON object — no markdown, no code fences, no commentary."
+        "\n\nHARD REQUIREMENTS — return exactly one JSON object with keys IN THIS ORDER:\n" +
+        "1) _thought_process — string: required plan before story (see system prompt): MATH TARGET → SOLUTION → STORY MAPPING → DRAFT; unlimited length.\n" +
+        "2) topic_category\n" +
+        "3) criterion\n" +
+        "4) Exactly ONE of: text (string) OR text_blocks (array) — not both.\n" +
+        "5) expected_answer\n" +
+        "6) success_criteria\n" +
+        "7) ideal_explanation — FINAL polished explanation for the student only; max 4 sentences; NO internal monologue.\n" +
+        '8) visual_type — "svg" or "none".\n' +
+        "9) svg_spec — raw SVG when visual_type is svg (see system prompt: single quotes on attributes, viewBox='0 0 100 100'); \"\" when none.\n" +
+        '10) type — must be "input".\n' +
+        "- Key names must match the schema exactly: use \"criterion\" (single letter A–D), never criterion_letter or criterionLetter. Do not add difficulty_band, combat_state, or stem — only text or text_blocks for the stem.\n" +
+        "- No other keys. criterion must match this user prompt (A/B/C/D). If US dollars and algebra appear together, use text_blocks (omit text).\n" +
+        "- expected_answer: short canonical answer (LaTeX OK); same units/ledger as the story. success_criteria: one string, 2–5 lines starting \"- \", for this criterion letter.\n" +
+        "- Diagrams: only in svg_spec (SVG). If no diagram, visual_type \"none\" and svg_spec \"\".\n" +
+        "- Put scratchpad only in _thought_process — not in ideal_explanation.\n" +
+        "- In prose strings, use single quotes for nested speech so JSON stays valid (avoid raw \" inside values).\n" +
+        "- Scope: IB MYP Year 7–8 band from the prompt; no calculus/trig/logs/quadratic formula as the main skill.\n" +
+        "- LaTeX in JSON strings: double each backslash (e.g. \\\\frac).\n" +
+        "\nOutput only the JSON object — no markdown, no code fences, no commentary."
     );
 }
  async function fetchQuestionViaDashScope(dashscopeKey, basePrompt, pedagogy = null) {
@@ -2125,39 +1962,43 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     };
     const systemMsg = {
         role: "system",
-        content:
-            "You output exactly one valid JSON object. No markdown fences, no commentary. Double-quoted strings only. " +
-            "Priority: (1) HARD REQUIREMENTS and string contract in the user message — keys, types, plotly_spec, escaping; (2) engaging MYP story second. Never break (1) for (2). " +
-            "Honor the user’s topic_category, criterion, speaker/addressee names, strand shape, unit ledger, and chart rules. " +
-            "Quantity/object word problems need non-empty plotly_spec with numeric Plotly data (see user)."
+        content: getCombatQuestionSystemPrompt()
     };
     const questionBackoff = { min429DelayMs: 3500, maxDelayMs: 22000, initialDelayMs: 1000 };
     const fetchQuestionRaw = async (userContent) => {
         const messages = [systemMsg, { role: "user", content: userContent }];
+        // Qwen: lower temperature reduces repetitive "Wait…" reasoning loops; generous max_tokens avoids truncated JSON on math + _thought_process.
+        const base = {
+            model: dsModel,
+            messages,
+            temperature: 0.3,
+            max_tokens: 4096
+        };
+        const bodyWithSchema = JSON.stringify({
+            ...base,
+            response_format: combatQuestionJsonSchemaResponseFormat()
+        });
         const bodyWithJson = JSON.stringify({
-            model: dsModel,
-            messages,
-            response_format: { type: "json_object" },
-            temperature: 0.65,
-            max_tokens: 1100
+            ...base,
+            response_format: { type: "json_object" }
         });
-        const bodyPlain = JSON.stringify({
-            model: dsModel,
-            messages,
-            temperature: 0.65,
-            max_tokens: 1100
-        });
+        const bodyPlain = JSON.stringify(base);
+        const chain = [bodyWithSchema, bodyWithJson, bodyPlain];
         let res;
-        try {
-            res = await fetchWithBackoff(url, { method: "POST", headers, body: bodyWithJson }, 4, questionBackoff);
-        } catch (e) {
-            const m = e && e.message ? String(e.message) : "";
-            if (m.includes("400")) {
-                res = await fetchWithBackoff(url, { method: "POST", headers, body: bodyPlain }, 4, questionBackoff);
-            } else {
+        let lastErr;
+        for (let ci = 0; ci < chain.length; ci++) {
+            try {
+                res = await fetchWithBackoff(url, { method: "POST", headers, body: chain[ci] }, 4, questionBackoff);
+                lastErr = null;
+                break;
+            } catch (e) {
+                lastErr = e;
+                const m = e && e.message ? String(e.message) : "";
+                if (m.includes("400") && ci < chain.length - 1) continue;
                 throw e;
             }
         }
+        if (!res) throw lastErr || new Error("DashScope: request failed");
         const data = await res.json();
         if (data && data.error) {
             throw new Error(data.error.message || JSON.stringify(data.error));
@@ -2183,7 +2024,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
             content = await fetchQuestionRaw(
                 userContent +
                     "\n\nYour previous output failed validation. Output one corrected JSON object only.\n" +
-                    r.err
+                    r.err +
+                    "\n\nReminder: include every required key — expected_answer, success_criteria, visual_type, svg_spec, and the field must be named \"criterion\" (A/B/C/D), not criterion_letter."
             );
             r = parseFinalizeCombat(content);
         }
@@ -2195,46 +2037,79 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         const n = normalizeQuestionStem(t);
         return !!n && recentSet.has(n);
     };
-     let parsed = await callModel(basePrompt + dashScopeQuestionUserSuffix());
-    if (isDup(parsed.text)) {
-        const avoid = (state.recentQuestionStems || []).slice(0, 10).map((s) => `- ${s}`).join("\n");
-        parsed = await callModel(
+    const recentStemsAvoidBlock = () =>
+        (state.recentQuestionStems || []).slice(0, 10).map((s) => `- ${s}`).join("\n");
+    /** Regenerate when the stem matches persisted recent history (also call after diagram retries — those can reintroduce a duplicate). */
+    const ensureStemNotInRecentHistory = async (p) => {
+        if (!isDup(p.text)) return p;
+        const avoid = recentStemsAvoidBlock();
+        let next = await callModel(
             basePrompt +
                 dashScopeQuestionUserSuffix() +
                 "\n\nCritical: You repeated a recent question. Regenerate a clearly different problem (new numbers, different story, different structure). Avoid anything similar to these recent stems:\n" +
                 avoid
         );
-        if (isDup(parsed.text)) {
-            parsed = await callModel(
+        if (isDup(next.text)) {
+            next = await callModel(
                 basePrompt +
                     dashScopeQuestionUserSuffix() +
                     "\n\nFinal warning: you repeated a recent question AGAIN. Output a brand-new problem with different numbers/context and a different structure. Do not reuse any prior stem patterns."
             );
-            if (isDup(parsed.text)) {
-                throw new Error("DashScope returned a duplicate question stem (recent history)");
-            }
         }
-    }
-    // Enforce charts for quantity stories (especially marbles). Retry a few times if the model ignores it.
-    if (responseNeedsNonEmptyPlotlyChart(parsed)) {
+        if (isDup(next.text)) {
+            throw new Error("DashScope returned a duplicate question stem (recent history)");
+        }
+        return next;
+    };
+    /** Same numbers + same equation “shape” as the question still on screen (model often ignores prose warnings). */
+    const ensureStemNotNumericCloneOfActive = async (p) => {
+        const active = state.activeQuestion?.text;
+        if (!active || !stemsShareHeavyNumberMultiset(p.text, active, 4)) return p;
+        let next = await callModel(
+            basePrompt +
+                dashScopeQuestionUserSuffix() +
+                "\n\nCritical: Your JSON reused the SAME key numbers (and effectively the same problem) as the player's CURRENT on-screen stem. Change every significant quantity, the setting, and the equation — do not output another version of the same moat/pump/rate story with identical data."
+        );
+        next = await ensureStemNotInRecentHistory(next);
+        if (state.activeQuestion?.text && stemsShareHeavyNumberMultiset(next.text, state.activeQuestion.text, 4)) {
+            next = await callModel(
+                basePrompt +
+                    dashScopeQuestionUserSuffix() +
+                    "\n\nFinal attempt: the stem still matches the current battle question's numeric pattern. Invent a totally different scenario and different numbers (no shared multiset of four or more story integers)."
+            );
+            next = await ensureStemNotInRecentHistory(next);
+        }
+        if (state.activeQuestion?.text && stemsShareHeavyNumberMultiset(next.text, state.activeQuestion.text, 4)) {
+            throw new Error("DashScope returned a numeric clone of the active combat question");
+        }
+        return next;
+    };
+     let parsed = await callModel(basePrompt + dashScopeQuestionUserSuffix());
+    parsed = await ensureStemNotInRecentHistory(parsed);
+    parsed = await ensureStemNotNumericCloneOfActive(parsed);
+    // Quantity tales, marbles, and rate/inflow stories require SVG in svg_spec.
+    if (combatQuestionRequiresSvgDiagram(parsed)) {
         const chartRetries = 3;
-        for (let i = 0; i < chartRetries && !parsePlotlySpec(parsed.plotly_spec); i++) {
+        for (let i = 0; i < chartRetries && !hasRenderableCombatSvg(parsed); i++) {
             parsed = await callModel(
                 basePrompt +
                     dashScopeQuestionUserSuffix() +
-                    '\n\nYour previous JSON was rejected: it used a marble/bag/object quantity story, so plotly_spec MUST be a non-empty valid Plotly JSON string.\n' +
-                    'You MUST include a chart. Use one of these minimal templates:\n' +
-                    '1) Bars (preferred): {"data":[{"type":"bar","x":["Start","Change","End"],"y":[23,12,35]}],"layout":{"title":"Start → Change → End"}}\n' +
-                    '   For take-away stories, make Change negative, e.g. {"y":[17,-5,12]}.\n' +
-                    '2) Number line (ok): {"data":[{"type":"scatter","mode":"lines+markers","x":[23,35],"y":[0,0]}],"layout":{"title":"Number line"}}\n' +
-                    'Pick numbers that match your story (use the exact quantities from the problem). plotly_spec must be a JSON-ENCODED STRING at that key.\n' +
-                    'Do not leave plotly_spec empty.'
+                    "\n\nYour previous JSON was rejected: this stem needs a diagram (quantity story, marble/bag tale, OR inflow/outflow/rate problem).\n" +
+                    'Set visual_type to "svg" and svg_spec to a raw SVG string.\n' +
+                    "CRITICAL: Inside svg_spec use SINGLE QUOTES for all SVG attributes only (never double quotes inside the SVG string — that breaks JSON).\n" +
+                    "Use the standard wrapper: <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>\n" +
+                    "For Start/Change/End or net-rate stories, draw labeled shapes (e.g. three <rect> bars, or a simple tank diagram) that match your numbers.\n" +
+                    "Do not embed chart data as nested JSON strings — use SVG in svg_spec only."
             );
+            parsed = await ensureStemNotInRecentHistory(parsed);
+            parsed = await ensureStemNotNumericCloneOfActive(parsed);
         }
-        if (!parsePlotlySpec(parsed.plotly_spec)) {
-            throw new Error("DashScope returned empty/invalid plotly_spec for a quantity story (chart required)");
+        if (!hasRenderableCombatSvg(parsed)) {
+            throw new Error("DashScope returned no valid SVG in svg_spec for a story that requires a diagram");
         }
     }
+    parsed = await ensureStemNotInRecentHistory(parsed);
+    parsed = await ensureStemNotNumericCloneOfActive(parsed);
     applyPedagogyLabelsToCombatQuestion(parsed, pedagogy);
     return Object.assign(parsed, { _questionSource: "dashscope", _dashscopeModel: dsModel });
 }
@@ -2242,7 +2117,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     // One combat question can trigger several HTTP calls (validate retry, dup, chart); allow enough wall time.
     // - query: ?aiTimeoutMs=90000
     // - config: window.__prefetch_ai_timeout_ms = 90000
-    let ms = 65000;
+    let ms = 90000;
     try {
         const qs = new URLSearchParams(location.search);
         const v = qs.get("aiTimeoutMs");
@@ -2358,6 +2233,19 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     await loadQuestion();
 }
  async function loadQuestion() {
+    if (loadQuestionInFlight) {
+        return loadQuestionInFlight;
+    }
+    loadQuestionInFlight = (async () => {
+        try {
+            await loadQuestionOnce();
+        } finally {
+            loadQuestionInFlight = null;
+        }
+    })();
+    return loadQuestionInFlight;
+}
+ async function loadQuestionOnce() {
     clearBattleDamageOverlay();
     if (!state.nextQuestion) {
         await prefetchQuestion();
@@ -2366,6 +2254,16 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     state.nextQuestion = null;
     if (!q) {
         q = pickFallbackQuestion(state.activeQuestion?.text);
+    }
+    const priorStem = state.activeQuestion?.text;
+    if (
+        priorStem != null &&
+        String(priorStem).trim() &&
+        (normalizeQuestionStem(q.text) === normalizeQuestionStem(priorStem) ||
+            stemsShareHeavyNumberMultiset(q.text, priorStem, 4))
+    ) {
+        console.warn("[MathBattler] Consecutive duplicate / numeric-clone stem from buffer — swapping to offline pool.");
+        q = pickFallbackQuestion(priorStem);
     }
     state.activeQuestion = q;
     rememberQuestionStem(q.text);
@@ -2380,6 +2278,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     const qEl = document.getElementById('question-text');
     qEl.innerHTML = proseWithMathToHtml(q.text);
     MathJax.typesetPromise([qEl]);
+    mountCombatVisualSvg(document.getElementById("question-visual-container"), q);
      const grid = document.getElementById('mcq-grid');
     if (grid) grid.classList.add("hidden");
     const form = document.getElementById("answer-form");
@@ -2446,34 +2345,36 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         }
     }
      const plotContainer = document.getElementById("plot-container");
-    const parsed = typeof Plotly !== "undefined" ? parsePlotlySpec(q.plotly_spec) : null;
     if (plotContainer) {
         if (typeof Plotly !== "undefined") Plotly.purge(plotContainer);
-        if (parsed && typeof Plotly !== "undefined") {
-            plotContainer.classList.remove("hidden");
-            const baseLayout = {
-                autosize: true,
-                margin: { t: 28, b: 40, l: 44, r: 20 },
-                paper_bgcolor: "transparent",
-                plot_bgcolor: "rgba(15,23,42,0.6)",
-                font: { color: "#e5e7eb", size: 11 },
-                xaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true },
-                yaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true }
-            };
-            const layout = { ...baseLayout, ...parsed.layout, autosize: true };
-            delete layout.height;
-            delete layout.width;
-            Plotly.newPlot(plotContainer, parsed.data, layout, {
-                displayModeBar: false,
-                responsive: true
-            });
-            requestAnimationFrame(() => {
-                try {
-                    Plotly.Plots.resize(plotContainer);
-                } catch (_) {}
-            });
-        } else {
-            plotContainer.classList.add("hidden");
+        clearCombatVisualMount(plotContainer);
+        mountCombatVisualSvg(plotContainer, q);
+        if (plotContainer.classList.contains("hidden")) {
+            const parsed = typeof Plotly !== "undefined" ? parsePlotlySpec(q.plotly_spec) : null;
+            if (parsed && typeof Plotly !== "undefined") {
+                plotContainer.classList.remove("hidden");
+                const baseLayout = {
+                    autosize: true,
+                    margin: { t: 28, b: 40, l: 44, r: 20 },
+                    paper_bgcolor: "transparent",
+                    plot_bgcolor: "rgba(15,23,42,0.6)",
+                    font: { color: "#e5e7eb", size: 11 },
+                    xaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true },
+                    yaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true }
+                };
+                const layout = { ...baseLayout, ...parsed.layout, autosize: true };
+                delete layout.height;
+                delete layout.width;
+                Plotly.newPlot(plotContainer, parsed.data, layout, {
+                    displayModeBar: false,
+                    responsive: true
+                });
+                requestAnimationFrame(() => {
+                    try {
+                        Plotly.Plots.resize(plotContainer);
+                    } catch (_) {}
+                });
+            }
         }
     }
      document.getElementById("detailed-feedback-overlay").classList.remove("hidden");
@@ -2506,7 +2407,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         '- type must be the string "mcq".\n' +
         "- options: exactly 4 non-empty strings, plausible distractors.\n" +
         "- answer: must exactly match one element of options.\n" +
-        '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes.\n' +
+        '- plotly_spec: string only — "" OR one JSON-encoded chart specification (scatter/bar traces) with escaped inner quotes.\n' +
         "- ideal_explanation: 3–6 short sentences, clear steps.\n" +
         '- "text" and ideal_explanation: plain English only — no pipe tables, # headings, **, backticks, or ```; math as \\(...\\) only (no $$; no single-dollar math wraps). Lists: lines starting with "- ".\n' +
         "\n" +
@@ -3030,6 +2931,7 @@ window.closeDetailedFeedback = async () => {
     const plotEl = document.getElementById("plot-container");
     if (plotEl) {
         if (typeof Plotly !== "undefined") Plotly.purge(plotEl);
+        clearCombatVisualMount(plotEl);
         plotEl.classList.add("hidden");
     }
     const neededReflection = state.requireReflection;

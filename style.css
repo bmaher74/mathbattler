@@ -21,6 +21,19 @@
     min-height: 0;
     overflow: hidden;
 }
+/* Combat stem: LLM SVG (viewBox 0 0 100 100) scales to readable size */
+#question-visual-container:not(.hidden) {
+    width: 100%;
+    max-width: min(100%, 20rem);
+    margin-left: auto;
+    margin-right: auto;
+}
+#question-visual-container:not(.hidden) svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: min(32vh, 220px);
+}
 @keyframes quest-glow { 0%, 100% { filter: drop-shadow(0 0 6px rgba(250, 204, 21, 0.9)); } 50% { filter: drop-shadow(0 0 14px rgba(250, 204, 21, 1)); } }
 .quest-node-current { animation: quest-glow 2.2s ease-in-out infinite; }
 .quest-map-wrap { min-height: 0; }

@@ -1,4 +1,5 @@
 import { state, safeSet, MAX_RECENT_STEMS, normalizeQuestionStem, rememberQuestionStem } from "./state.js";
+import { composeCombatStemTextFromBlocks } from "./ai/combatTextBlocks.js";
 import { runDashScopeJudge } from "./ai/runDashScopeJudge.js";
 import { localFallbackJudge } from "./ai/localFallbackJudge.js";
 
@@ -1140,7 +1141,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "7",
         success_criteria: "- Show the inverse operation.\n- Write the final value of $x$.\n- Quick check by substituting back.",
         ideal_explanation: "Subtract $5$ from both sides: $x = 12 - 5 = 7$. Check: $7+5=12$.",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1150,7 +1152,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "14",
         success_criteria: "- Use correct order of operations.\n- Show the intermediate multiplication.",
         ideal_explanation: "Multiply first: $3 \\times 4 = 12$, then $2 + 12 = 14$.",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1160,7 +1163,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "$\\frac{3}{4}$",
         success_criteria: "- Use a common denominator.\n- Combine numerators.\n- Simplify if needed.",
         ideal_explanation: "Use a common denominator: $\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}$.",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1170,7 +1174,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "5",
         success_criteria: "- Correct subtraction.\n- Final statement.",
         ideal_explanation: "Subtract: $8 - 3 = 5$.",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1180,7 +1185,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "16",
         success_criteria: "- State the perimeter rule.\n- Show multiplication.\n- Include units if given.",
         ideal_explanation: "Perimeter of a square is $4 \\times \\text{side} = 4 \\times 4 = 16$.",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     },
     {
@@ -1190,7 +1196,8 @@ const FALLBACK_QUESTIONS = [
         expected_answer: "3",
         success_criteria: "- Correct division.\n- Final statement.",
         ideal_explanation: "$9 \\div 3 = 3$.",
-        plotly_spec: "",
+        visual_type: "none",
+        svg_spec: "",
         type: "input"
     }
 ];
@@ -1234,19 +1241,16 @@ function normalizeLatexCurrency(s) {
     }
     return out;
 }
- function synthesizeQuantityStoryPlotlySpec(q) {
+ function synthesizeQuantityStorySvgSpec(q) {
     const blob = `${String(q?.text || "")} ${String(q?.ideal_explanation || "")}`.toLowerCase();
     const ints = extractAllIntegers(blob);
     if (ints.length < 2) return "";
-     // Heuristic: use the last two numbers as (change, end) or (end, change) depending on verbs.
     const a = ints[ints.length - 2];
     const b = ints[ints.length - 1];
     let change = a;
     let end = b;
-     // If story implies subtraction (spent/gave away/lost), treat 'a' as change and compute start = end + change.
     const isSubtractStory = /\b(spend|spent|gave away|give away|lost|take away|take out|removed|minus|left)\b/.test(blob);
     const isAddStory = /\b(add|added|got|received|plus|more)\b/.test(blob);
-     // Prefer end to be the larger number if add story; prefer end to be the smaller if subtract story.
     if (isAddStory && a > b) {
         change = b;
         end = a;
@@ -1254,31 +1258,41 @@ function normalizeLatexCurrency(s) {
         change = b;
         end = a;
     }
-     const absChange = Math.abs(change);
+    const absChange = Math.abs(change);
     let start = isSubtractStory ? end + absChange : end - absChange;
     if (!Number.isFinite(start)) start = end - Math.abs(change);
-     const signedChange = isSubtractStory ? -absChange : absChange;
-    const labels = ["Start", "Change", "End"];
-    const values = [start, signedChange, end];
-    const barColors = ["#60a5fa", signedChange < 0 ? "#f87171" : "#34d399", "#fbbf24"];
-     const spec = {
-        data: [
-            {
-                type: "bar",
-                x: labels,
-                y: values,
-                marker: { color: barColors }
-            }
-        ],
-        layout: {
-            title: "Start → Change → End",
-            xaxis: { title: "" },
-            yaxis: { title: "Amount", zeroline: true }
-        }
-    };
-    return JSON.stringify(spec);
+    const signedChange = isSubtractStory ? -absChange : absChange;
+    const vals = [start, signedChange, end];
+    const maxAbs = Math.max(1, ...vals.map((v) => Math.abs(v)));
+    const labels = ["Start", "Chg", "End"];
+    const colors = ["#60a5fa", signedChange < 0 ? "#f87171" : "#34d399", "#fbbf24"];
+    const bw = 22;
+    const gap = 6;
+    const baseY = 88;
+    const maxH = 62;
+    let x = 10;
+    const parts = [];
+    for (let i = 0; i < 3; i++) {
+        const v = vals[i];
+        const h = Math.round((Math.abs(v) / maxAbs) * maxH);
+        const y = baseY - h;
+        parts.push(
+            `<rect x='${x}' y='${y}' width='${bw}' height='${h}' fill='${colors[i]}' stroke='black' stroke-width='0.6'/>`
+        );
+        parts.push(
+            `<text x='${x + bw / 2}' y='${96}' font-size='5' text-anchor='middle' fill='#e5e7eb'>${labels[i]}</text>`
+        );
+        x += bw + gap;
+    }
+    return `<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>${parts.join("")}</svg>`;
 }
- /** True when text + explanation use concrete quantities / stories that should always get a Plotly chart. */
+ function hasRenderableCombatSvg(q) {
+    if (!q || q.visual_type !== "svg") return false;
+    const s = String(q.svg_spec ?? "").trim();
+    if (s.length < 12) return false;
+    return /<svg[\s>]/i.test(s) && /viewBox\s*=\s*['"]/i.test(s);
+}
+ /** True when text + explanation use concrete quantities / stories that should always get a diagram. */
 function responseNeedsNonEmptyPlotlyChart(q) {
     if (!q || typeof q !== "object") return false;
     const blob = `${String(q.text || "")} ${String(q.ideal_explanation || "")}`.toLowerCase();
@@ -1434,15 +1448,11 @@ CREATIVITY & VARIATION (must follow):
 
 For ideal_explanation: write as if explaining to a smart 10-year-old — short sentences, everyday words, friendly tone, optional one simple analogy; still be mathematically correct and use LaTeX for formulas. Do not sound like a dry textbook abstract.
 
-For charts vs words: If plotly_spec is "", you must NOT say there is a graph, picture, chart, plot, or "visual" in "text" or "ideal_explanation". If you want a chart, set plotly_spec to a non-empty JSON STRING (escaped in the outer JSON) with valid Plotly content: at least one trace with numeric coordinates (e.g. scatter with "x" and "y" arrays of numbers, or bars). The app renders only plotly_spec — promising a visual in prose without filling plotly_spec is wrong.
+For diagrams vs words: Use visual_type "svg" and svg_spec for diagrams. If visual_type is "none", do NOT say there is a graph, picture, chart, or diagram in "text" or "ideal_explanation". Inside svg_spec use raw SVG only: SINGLE QUOTES for all SVG attributes (never double quotes inside the SVG string), and wrap with <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>. The app renders svg_spec — promising a visual without filling it is wrong.
 
-Default toward a chart when the math has a clear picture: linear or simple equations, inequalities on a number line, proportional relationships, "y vs x", comparing two quantities, or geometry with lengths/angles. Use a minimal Plotly chart (e.g. scatter mode lines+markers through two points, or a bar chart for two numbers). Reserve plotly_spec "" only when a graph would truly add nothing (e.g. "which expression is prime?", pure symbol push with no numeric story).
+When a diagram helps (geometry, or quantity stories with Start/Change/End), use a minimal SVG (primitives: rect, line, text). Reserve visual_type "none" only when a diagram would add nothing.
 
-STRICT (addition/subtraction & stories): If the question OR ideal_explanation involves marbles, apples, cookies, toys, a bag/jar/box, "gave away", "started with", "take out", "how many left", "in all", or any similar real-world quantity story, plotly_spec MUST be a non-empty valid Plotly string — this is required, not optional.
-
-Preferred chart for these: a bar chart with x = ["Start","Change","End"] and y = [start, change, end], where change is NEGATIVE for take-away/spent/gave-away and POSITIVE for added/received. This directly shows the math step.
-
-Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
+STRICT (addition/subtraction & stories): If the question OR ideal_explanation involves marbles, apples, cookies, toys, a bag/jar/box, "gave away", "started with", "take out", "how many left", "in all", or any similar real-world quantity story, you MUST set visual_type to "svg" and provide svg_spec with a simple bar-style SVG (three rects for Start, Change, End) using the single-quote rule.`;
 }
  function parseModelJsonContent(content) {
     if (content == null) throw new Error("empty model content");
@@ -1471,9 +1481,16 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
 }
  function validateQuestionPayload(q) {
     if (!q || typeof q !== "object") throw new Error("invalid question");
-    const need = ["text", "ideal_explanation", "type", "expected_answer", "criterion", "success_criteria"];
+    const need = ["ideal_explanation", "type", "expected_answer", "criterion", "success_criteria"];
     for (const k of need) {
         if (q[k] == null || q[k] === "") throw new Error("missing " + k);
+    }
+    const hasText = q.text != null && String(q.text).trim().length > 0;
+    const hasBlocks = Array.isArray(q.text_blocks) && q.text_blocks.length > 0;
+    if (!hasText && !hasBlocks) throw new Error("missing text or text_blocks");
+    if (hasText && hasBlocks) throw new Error("use either text or text_blocks, not both");
+    if (hasBlocks) {
+        q.text = composeCombatStemTextFromBlocks(q.text_blocks);
     }
     // Sanitize currency patterns before rendering and before answer/option comparisons.
     q.text = normalizeLatexCurrency(q.text);
@@ -1482,20 +1499,15 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     q.criterion = String(q.criterion).trim().toUpperCase();
     if (!["A", "B", "C", "D"].includes(q.criterion)) throw new Error("criterion must be A, B, C, or D");
     if (q.type !== "input") throw new Error('type must be "input"');
-    if (q.plotly_spec != null && typeof q.plotly_spec === "object") {
-        try {
-            q.plotly_spec = JSON.stringify(q.plotly_spec);
-        } catch (_) {
-            q.plotly_spec = "";
-        }
-    }
-    if (q.plotly_spec == null) q.plotly_spec = "";
     if (q.topic_category == null) q.topic_category = "Math";
-     // If this is a quantity story and the model didn't give a valid chart, synthesize a minimal number line.
-    // This prevents "imagine a number line" with no actual plot.
-    if (responseNeedsNonEmptyPlotlyChart(q) && parsePlotlySpec(q.plotly_spec) == null) {
-        const synthesized = synthesizeQuantityStoryPlotlySpec(q);
-        if (synthesized) q.plotly_spec = synthesized;
+    if (q.visual_type == null) q.visual_type = "none";
+    if (q.svg_spec == null) q.svg_spec = "";
+    if (responseNeedsNonEmptyPlotlyChart(q) && !hasRenderableCombatSvg(q)) {
+        const synthesized = synthesizeQuantityStorySvgSpec(q);
+        if (synthesized) {
+            q.visual_type = "svg";
+            q.svg_spec = synthesized;
+        }
     }
 }
  function assertSmokePingJson(parsed) {
@@ -1630,12 +1642,11 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
         '- criterion must be one of "A", "B", "C", "D" (same letter as MYP criterion focus in the prompt).\n' +
         "- expected_answer: the canonical final answer as a short string (may include LaTeX).\n" +
         "- success_criteria: 2–5 bullet points (as a single string). Each bullet must describe text evidence that would justify achievement levels 7–8 for the targeted criterion letter ONLY. Do not bundle other criteria into these bullets.\n" +
-        '- plotly_spec: string only — "" OR one JSON-encoded Plotly spec with escaped inner quotes; never a raw object at this key. If "", do not mention any graph/chart/visual in text or ideal_explanation. If not "", include real numeric trace data so a chart can render (e.g. scatter with numeric "x" and "y").\n' +
+        '- visual_type: "svg" or "none". svg_spec: raw SVG when visual_type is svg, else "".\n' +
         "- Curriculum: keep within IB MYP Year 7–8 scope and obey the band indicated in the prompt; avoid calculus/trig/logs/quadratic formula.\n" +
-        '- REQUIRED: If text or ideal_explanation mentions marbles, apples, cookies, toys, a bag/box/jar, "gave"/"take away"/"started with"/"how many left"/"in all" or similar quantity stories, plotly_spec MUST NOT be "". Use a number-line scatter (y all 0) or a bar chart with numeric heights.\n' +
-        '- Prefer non-empty plotly_spec when the math has a natural picture (equations, lines, rates, two quantities to compare, number-line ideas); a minimal scatter or bar chart is enough. Use "" only when a graph would not help.\n' +
+        "- REQUIRED for quantity stories (marbles, bags, gave away, …): visual_type \"svg\" and a non-empty svg_spec with single-quoted SVG attributes and viewBox='0 0 100 100'.\n" +
         "- ideal_explanation: short teacher-style solution steps and a quick check; LaTeX for math; keep it readable for Year 7/8.\n" +
-        '\nReturn one JSON object with exactly these keys: topic_category, criterion, text, expected_answer, success_criteria, ideal_explanation, plotly_spec, type. No markdown, no code fences.'
+        "\nReturn one JSON object with keys: topic_category, criterion, expected_answer, success_criteria, ideal_explanation, visual_type, svg_spec, type, and exactly ONE of: text (string) OR text_blocks (array of prose/inline_math objects). Use text_blocks when US dollars and algebra appear together. No markdown, no code fences."
     );
 }
  async function fetchQuestionViaDashScope(dashscopeKey, basePrompt) {
@@ -1648,7 +1659,7 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
     const systemMsg = {
         role: "system",
         content:
-            "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. For word problems with objects (marbles, apples, bags) or addition/subtraction stories, always include a non-empty plotly_spec with numeric Plotly data (number line or bars) — never leave plotly_spec empty for those."
+            "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. For word problems with objects (marbles, apples, bags) or addition/subtraction stories, include visual_type \"svg\" and svg_spec as raw SVG (single-quoted attributes, viewBox='0 0 100 100')."
     };
     const questionBackoff = { min429DelayMs: 3500, maxDelayMs: 22000, initialDelayMs: 1000 };
      const callModel = async (userContent) => {
@@ -1692,49 +1703,48 @@ Avoid an unlabeled line graph that doesn’t connect to the story steps.`;
         const n = normalizeQuestionStem(t);
         return !!n && recentSet.has(n);
     };
-     let parsed = await callModel(basePrompt + dashScopeQuestionUserSuffix());
-    if (isDup(parsed.text)) {
+    const ensureStemNotInRecentHistory = async (p) => {
+        if (!isDup(p.text)) return p;
         const avoid = (state.recentQuestionStems || []).slice(0, 10).map((s) => `- ${s}`).join("\n");
-        parsed = await callModel(
+        let next = await callModel(
             basePrompt +
                 dashScopeQuestionUserSuffix() +
                 "\n\nCritical: You repeated a recent question. Regenerate a clearly different problem (new numbers, different story, different structure). Avoid anything similar to these recent stems:\n" +
                 avoid
         );
-        validateQuestionPayload(parsed);
-        if (isDup(parsed.text)) {
-            parsed = await callModel(
+        if (isDup(next.text)) {
+            next = await callModel(
                 basePrompt +
                     dashScopeQuestionUserSuffix() +
                     "\n\nFinal warning: you repeated a recent question AGAIN. Output a brand-new problem with different numbers/context and a different structure. Do not reuse any prior stem patterns."
             );
-            validateQuestionPayload(parsed);
-            if (isDup(parsed.text)) {
-                throw new Error("DashScope returned a duplicate question stem (recent history)");
-            }
         }
-    }
-    // Enforce charts for quantity stories (especially marbles). Retry a few times if the model ignores it.
+        if (isDup(next.text)) {
+            throw new Error("DashScope returned a duplicate question stem (recent history)");
+        }
+        return next;
+    };
+     let parsed = await callModel(basePrompt + dashScopeQuestionUserSuffix());
+    parsed = await ensureStemNotInRecentHistory(parsed);
+    // Enforce SVG for quantity stories (especially marbles). Retry a few times if the model ignores it.
     if (responseNeedsNonEmptyPlotlyChart(parsed)) {
         const chartRetries = 3;
-        for (let i = 0; i < chartRetries && !parsePlotlySpec(parsed.plotly_spec); i++) {
+        for (let i = 0; i < chartRetries && !hasRenderableCombatSvg(parsed); i++) {
             parsed = await callModel(
                 basePrompt +
                     dashScopeQuestionUserSuffix() +
-                    '\n\nYour previous JSON was rejected: it used a marble/bag/object quantity story, so plotly_spec MUST be a non-empty valid Plotly JSON string.\n' +
-                    'You MUST include a chart. Use one of these minimal templates:\n' +
-                    '1) Bars (preferred): {"data":[{"type":"bar","x":["Start","Change","End"],"y":[23,12,35]}],"layout":{"title":"Start → Change → End"}}\n' +
-                    '   For take-away stories, make Change negative, e.g. {"y":[17,-5,12]}.\n' +
-                    '2) Number line (ok): {"data":[{"type":"scatter","mode":"lines+markers","x":[23,35],"y":[0,0]}],"layout":{"title":"Number line"}}\n' +
-                    'Pick numbers that match your story (use the exact quantities from the problem). plotly_spec must be a JSON-ENCODED STRING at that key.\n' +
-                    'Do not leave plotly_spec empty.'
+                    "\n\nYour previous JSON was rejected: it used a marble/bag/object quantity story, so you MUST include a diagram.\n" +
+                    'Set visual_type to "svg" and svg_spec to raw SVG.\n' +
+                    "Use SINGLE QUOTES for all SVG attributes. Standard wrapper: <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>.\n" +
+                    "Put diagrams only in svg_spec (SVG)."
             );
-            validateQuestionPayload(parsed);
+            parsed = await ensureStemNotInRecentHistory(parsed);
         }
-        if (!parsePlotlySpec(parsed.plotly_spec)) {
-            throw new Error("DashScope returned empty/invalid plotly_spec for a quantity story (chart required)");
+        if (!hasRenderableCombatSvg(parsed)) {
+            throw new Error("DashScope returned no valid SVG in svg_spec for a quantity story (diagram required)");
         }
     }
+    parsed = await ensureStemNotInRecentHistory(parsed);
     return Object.assign(parsed, { _questionSource: "dashscope", _dashscopeModel: dsModel });
 }
  function getPrefetchTimeoutMs() {

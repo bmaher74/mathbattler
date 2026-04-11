@@ -1,4 +1,8 @@
-export { CombatQuestionSchema } from "./combatQuestion.js";
+export {
+    CombatQuestionSchema,
+    CombatTextBlockSchema,
+    normalizeCombatQuestionInput
+} from "./combatQuestion.js";
 export { JudgeResultSchema } from "./judgeResult.js";
 export { PracticeMcqSchema } from "./practiceMcq.js";
 export { BossMetaSchema } from "./bossMeta.js";

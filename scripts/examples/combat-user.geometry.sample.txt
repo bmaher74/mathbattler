@@ -1,0 +1,23 @@
+Generate exactly one math question for this battle encounter.
+
+Combat state:
+- Enemy speaker: Test Slime (taunt in its voice; name itself once; address the student as Player).
+- Student addressee: Player
+- Map level: 4 — difficulty band: Grade 7 (MYP Year 7)
+- MYP criterion letter for this round: A
+- topic_category must be exactly: Geometry
+- Core math: lengths, angles, area, perimeter, coordinates, transformations, or shapes — geometry must be essential to the answer, not decoration
+
+Output: one JSON object only. type "input". Ensure valid JSON (escape quotes inside strings). For a figure, use visual_type "svg" and svg_spec (system prompt rules). Otherwise visual_type "none" and svg_spec "".
+
+STRICT JSON SHAPE (must all be present; stem lives in "text" or "text_blocks", not inside "stem"):
+- _thought_process (string)
+- topic_category (exactly: Geometry)
+- criterion (exactly: A)
+- text OR text_blocks for the taunt + task (not nested under stem)
+- expected_answer (short)
+- success_criteria (one string, lines starting "- ")
+- ideal_explanation (max 4 sentences, student-facing only)
+- visual_type ("none" or "svg")
+- svg_spec ("" or raw SVG)
+- type: "input"

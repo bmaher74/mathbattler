@@ -1,5 +1,6 @@
 /**
- * Strip markdown-ish noise from model prose. Models must emit inline math as \\(...\\) only; unpaired $ stays literal (currency).
+ * Strip markdown-ish noise from model prose. The UI’s MathJax uses \\(...\\) for inline math only—never $—because $ is
+ * ubiquitous in ordinary text. Legacy paired $...$ from models is repaired where safe (rewriteDollarInlineMathToParen).
  * Runs after JSON.parse (includes fixJsonEscapeCorruptedLatexCommands).
  */
 
@@ -116,6 +117,24 @@ function collapseDisplayMathToInline(s) {
 }
 
 /**
+ * After $ and a numeric run, decide if unpaired text is money ($14 per) vs prose that starts with a number ($2 for the school…$).
+ * Paired $n$ is handled by the caller before this (immediate closing $).
+ */
+function looksLikeUnpairedCurrencyAfterDollarNumber(str, indexAfterNumericRun) {
+    const nextCh = indexAfterNumericRun < str.length ? str[indexAfterNumericRun] : "";
+    if (nextCh === "$") return true;
+    if (/[A-Za-z:]/.test(nextCh)) return false;
+    const w = str.slice(indexAfterNumericRun).match(/^\s*([a-z]{2,})/i);
+    if (!w) return true;
+    const word = w[1].toLowerCase();
+    /** Keep small: "and"/"or" often follow a price ("$5 and solve…"). Prefer only clear sentence-starters after a leading numeral. */
+    if (/^(for|the|a|an|if)$/i.test(word)) {
+        return false;
+    }
+    return true;
+}
+
+/**
  * Heuristic: models sometimes wrap a whole word problem in $...$. MathJax then treats it as math and
  * swallows spaces (every letter looks italic). Real inline math is usually short or TeX-heavy.
  */
@@ -153,6 +172,26 @@ export function demoteAccidentalInlineMathWrapping(s) {
             continue;
         }
         i++;
+        const restDem = str.slice(i);
+        const curDem = restDem.match(/^\s*(\d+(?:\.\d+)?)/);
+        if (curDem) {
+            const lenDem = curDem[0].length;
+            const afterNumDem = i + lenDem;
+            const nextChDem = afterNumDem < str.length ? str[afterNumDem] : "";
+            /** Same rule as rewriteDollarInlineMathToParen: $3:4 is a ratio, not currency $3. */
+            if (!/[A-Za-z:]/.test(nextChDem)) {
+                if (afterNumDem < str.length && str[afterNumDem] === "$") {
+                    out += "$" + String(curDem[1]).trim();
+                    i = afterNumDem + 1;
+                    continue;
+                }
+                if (looksLikeUnpairedCurrencyAfterDollarNumber(str, afterNumDem)) {
+                    out += "$" + curDem[0];
+                    i += lenDem;
+                    continue;
+                }
+            }
+        }
         let inner = "";
         while (i < str.length) {
             if (str[i] === "\\" && str[i + 1] === "$") {
@@ -177,6 +216,66 @@ export function demoteAccidentalInlineMathWrapping(s) {
     return out;
 }
 
+/**
+ * Best-effort repair when models still emit TeX-style $...$ math. Product rule: inline math must be \\(...\\) only—$ is too
+ * common in prose (money, etc.) to be a reliable delimiter. This does not “bless” $ math; it migrates legacy pairs to \\( \\)
+ * and treats numeric $…$ as currency. Prefer fixing prompts so the model never emits paired $ for math.
+ */
+export function rewriteDollarInlineMathToParen(s) {
+    const str = String(s);
+    let out = "";
+    let i = 0;
+    while (i < str.length) {
+        if (str[i] === "\\" && str[i + 1] === "$") {
+            out += "\\$";
+            i += 2;
+            continue;
+        }
+        if (str[i] !== "$") {
+            out += str[i++];
+            continue;
+        }
+        i++;
+        const rest = str.slice(i);
+        const cur = rest.match(/^\s*(\d+(?:\.\d+)?)/);
+        if (cur) {
+            const len = cur[0].length;
+            const afterNum = i + len;
+            const nextCh = afterNum < str.length ? str[afterNum] : "";
+            /** $14 per — currency. $14x — math. $3:4 — ratio, not currency $3. */
+            if (!/[A-Za-z:]/.test(nextCh)) {
+                if (afterNum < str.length && str[afterNum] === "$") {
+                    out += "$" + String(cur[1]).trim();
+                    i = afterNum + 1;
+                    continue;
+                }
+                if (looksLikeUnpairedCurrencyAfterDollarNumber(str, afterNum)) {
+                    out += "$" + cur[0];
+                    i += len;
+                    continue;
+                }
+            }
+        }
+        let inner = "";
+        while (i < str.length) {
+            if (str[i] === "\\" && str[i + 1] === "$") {
+                inner += "\\$";
+                i += 2;
+                continue;
+            }
+            if (str[i] === "$") break;
+            inner += str[i++];
+        }
+        if (i < str.length && str[i] === "$") {
+            out += "\\(" + inner + "\\)";
+            i++;
+        } else {
+            out += "$" + inner;
+        }
+    }
+    return out;
+}
+
 export function sanitizeLlmProseString(s) {
     if (s == null) return s;
     let t = fixJsonEscapeCorruptedLatexCommands(String(s));
@@ -186,5 +285,6 @@ export function sanitizeLlmProseString(s) {
     t = stripMarkdownEmphasisMarkers(t);
     t = collapseDisplayMathToInline(t);
     t = demoteAccidentalInlineMathWrapping(t);
+    t = rewriteDollarInlineMathToParen(t);
     return t;
 }

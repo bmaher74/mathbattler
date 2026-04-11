@@ -5,13 +5,27 @@
  */
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadRootDotEnvIntoProcessEnv } from "./loadRootDotEnv.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const PORT = Number(process.env.PORT) || 8765;
-const HOST = process.env.HOST || "127.0.0.1";
+/** Bind all interfaces so other devices on the LAN can reach the dev server. Use HOST=127.0.0.1 for localhost only. */
+const HOST = process.env.HOST || "0.0.0.0";
+
+function lanIPv4Addresses() {
+    const out = [];
+    for (const nets of Object.values(os.networkInterfaces())) {
+        for (const net of nets || []) {
+            const fam = net.family;
+            if ((fam === "IPv4" || fam === 4) && !net.internal) out.push(net.address);
+        }
+    }
+    return out;
+}
 
 const MIME = {
     ".html": "text/html; charset=utf-8",
@@ -25,39 +39,6 @@ const MIME = {
     ".woff2": "font/woff2",
     ".webp": "image/webp"
 };
-
-/**
- * Merge repo-root `.env` into process.env.
- * - Fills missing keys.
- * - Also fills when process.env has an empty string (common gotcha: `export DASHSCOPE_API_KEY=`
- *   blocks .env forever if we skip "defined" keys — breaks after refresh vs first load).
- * Re-read on each call so `npm run serve` picks up .env edits without restart and stays
- * consistent for every `/runtime-config.js` request (hard refresh).
- */
-function loadRootDotEnvIntoProcessEnv() {
-    try {
-        const p = path.join(ROOT, ".env");
-        if (!fs.existsSync(p)) return;
-        const text = fs.readFileSync(p, "utf8");
-        for (const line of text.split("\n")) {
-            const t = line.trim();
-            if (!t || t.startsWith("#")) continue;
-            const m = t.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-            if (!m) continue;
-            const key = m[1];
-            const cur = process.env[key];
-            const curEmpty = cur === undefined || String(cur).trim() === "";
-            if (!curEmpty) continue;
-            let v = m[2].trim();
-            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-                v = v.slice(1, -1);
-            }
-            process.env[key] = v;
-        }
-    } catch (e) {
-        console.warn("WARN: failed to load .env:", e?.message || e);
-    }
-}
 
 function jsStringLiteral(s) {
     return JSON.stringify(String(s ?? ""));
@@ -124,13 +105,13 @@ const server = http.createServer((req, res) => {
     }
     let pathname;
     try {
-        pathname = new URL(req.url || "/", `http://${HOST}`).pathname;
+        pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
     } catch {
         res.writeHead(400).end();
         return;
     }
     if (pathname === "/runtime-config.js") {
-        loadRootDotEnvIntoProcessEnv();
+        loadRootDotEnvIntoProcessEnv(ROOT);
         res.setHeader("Content-Type", MIME[".js"]);
         res.setHeader("Cache-Control", "no-store");
         if (req.method === "HEAD") {
@@ -171,6 +152,14 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-    console.log(`Math Battler static server  http://${HOST}:${PORT}/`);
+    console.log("Math Battler static server");
+    console.log(`  Local:   http://127.0.0.1:${PORT}/`);
+    if (HOST === "0.0.0.0" || HOST === "::") {
+        for (const ip of lanIPv4Addresses()) {
+            console.log(`  Network: http://${ip}:${PORT}/`);
+        }
+    } else {
+        console.log(`  Bound:   http://${HOST}:${PORT}/`);
+    }
     console.log("(Open index.html in the browser — app logic is client-side only.)");
 });

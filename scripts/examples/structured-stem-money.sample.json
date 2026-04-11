@@ -1,0 +1,12 @@
+{
+  "description": "Structured stem: prose carries currency; inline_math carries algebra only (no $). Keep dialogue and equation in separate prose blocks so math is not inside quotes.",
+  "text_blocks": [
+    {
+      "type": "prose",
+      "content": "Penny Pincher laughs: 'You will never beat my prices! I sell at $14 per item. At the rival shop it is $8.50 per item with a $30 fee. For how many items do both cost the same?'"
+    },
+    { "type": "prose", "content": " Solve for x in " },
+    { "type": "inline_math", "latex": "14x = 8.50x + 30" },
+    { "type": "prose", "content": "." }
+  ]
+}

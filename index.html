@@ -45,6 +45,7 @@
     <link rel="stylesheet" href="tailwind.css" />
     <link rel="stylesheet" href="./style.css">
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <!-- Inline math: \\(...\\) only — not $...$ (avoids collision with currency $ and ordinary text). Display: $$...$$. -->
     <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']] } };</script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script type="importmap">
@@ -132,8 +133,8 @@
         </div>
     </div>
 
-    <div id="battle-screen" class="hidden flex-1 flex flex-col bg-gray-900 relative w-full max-w-2xl mx-auto border-x border-gray-700 overflow-hidden">
-        <div class="flex-1 flex flex-col relative bg-slate-900 bg-opacity-20">
+    <div id="battle-screen" class="hidden flex-1 min-h-0 flex flex-col bg-gray-900 relative w-full max-w-2xl mx-auto border-x border-gray-700 overflow-hidden">
+        <div class="flex-1 min-h-0 flex flex-col relative bg-slate-900 bg-opacity-20">
             <div id="combo-badge" class="hidden absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full border border-sky-400/60 bg-slate-900/80 text-sky-200 font-black uppercase tracking-wide text-xs shadow-lg">
                 Combo x3 — damage boosted
             </div>
@@ -157,11 +158,12 @@
             </div>
             <div id="combat-feedback" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 border-white p-4 rounded-xl text-center z-40 opacity-0 pointer-events-none transition-all"></div>
         </div>
-        <!-- INTERACTION PANEL (LOCKED HEIGHT) -->
-        <div id="interaction-panel" class="shrink-0 h-[45%] bg-gray-900 border-t-4 border-gray-700 flex flex-col p-4">
-            <div id="question-source-badge" class="hidden mb-2 text-center text-xs font-bold uppercase tracking-wide text-amber-300 border border-amber-600/60 bg-amber-950/40 rounded-lg py-1.5 px-2" title=""></div>
-            <div id="question-text" class="text-lg sm:text-xl font-bold text-yellow-300 text-center mb-4 min-h-[3rem]"></div>
-            <div id="action-area" class="flex-1 overflow-y-auto custom-scrollbar">
+        <!-- INTERACTION PANEL: fixed fraction of battle height; scrolls when stem + form exceed it -->
+        <div id="interaction-panel" class="shrink-0 h-[45%] min-h-0 bg-gray-900 border-t-4 border-gray-700 flex flex-col p-4 overflow-y-auto overflow-x-hidden custom-scrollbar overscroll-y-contain">
+            <div id="question-source-badge" class="hidden mb-2 shrink-0 text-center text-xs font-bold uppercase tracking-wide text-amber-300 border border-amber-600/60 bg-amber-950/40 rounded-lg py-1.5 px-2" title=""></div>
+            <div id="question-text" class="shrink-0 text-lg sm:text-xl font-bold text-yellow-300 text-center mb-4 min-h-[3rem]"></div>
+            <div id="question-visual-container" class="hidden w-full max-w-md mx-auto mb-3 shrink-0" aria-hidden="true"></div>
+            <div id="action-area" class="flex flex-col shrink-0">
                 <div id="mcq-grid" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3 pb-8"></div>
                 <form id="answer-form" class="flex flex-col gap-2" onsubmit="handleInputAttack(event)">
                     <button type="button" onclick="analyzeEnemy()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-black uppercase hover:bg-slate-700 self-center">Analyze Enemy</button>

@@ -1,6 +1,7 @@
 /**
  * AI keys for Math Battler (browser + validate-llm). See ai-config.sample.js.
  * Live questions use Alibaba DashScope only (Gemini / AI Studio is not wired in — unusable in HK).
+ * Combat questions try response_format json_schema first, then json_object, then plain — if a model returns HTTP 400 on json_schema, the app retries automatically.
  * Do not commit real keys to a public repo.
  */
 // Defaults only. For local dev, prefer `/runtime-config.js` served by `npm run serve`,

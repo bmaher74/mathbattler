@@ -1,0 +1,23 @@
+Generate exactly one math question for this battle encounter.
+
+Combat state:
+- Enemy speaker: Test Slime (taunt in its voice; name itself once; address the student as Player).
+- Student addressee: Player
+- Map level: 4 — difficulty band: Grade 7 (MYP Year 7)
+- MYP criterion letter for this round: A
+- topic_category must be exactly: Data & Probability
+- Core math: data (table, chart read-off, mean/median/range) or probability from counts/outcomes — statistics or chance must be central
+
+Output: one JSON object only. type "input". Ensure valid JSON (escape quotes inside strings). Follow HARD REQUIREMENTS for visual_type and svg_spec.
+
+STRICT JSON SHAPE (must all be present; stem lives in "text" or "text_blocks", not inside "stem"):
+- _thought_process (string)
+- topic_category (exactly: Data & Probability)
+- criterion (exactly: A)
+- text OR text_blocks for the taunt + task (not nested under stem)
+- expected_answer (short)
+- success_criteria (one string, lines starting "- ")
+- ideal_explanation (max 4 sentences, student-facing only)
+- visual_type ("none" or "svg")
+- svg_spec ("" or raw SVG)
+- type: "input"

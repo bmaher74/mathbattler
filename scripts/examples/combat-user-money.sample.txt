@@ -1,0 +1,17 @@
+Generate exactly one money-themed math question for this battle (US dollars in the story).
+
+Combat state:
+- Enemy: Penny Pincher
+- Student: Player
+- Level 6, Grade 7 band
+- criterion: A
+- topic_category: Algebra
+
+Requirements (test of dollars vs math):
+- The story must mention at least two dollar amounts using normal currency spelling: a single $ before the number (examples: $14 and $8.50). Do not use paired dollar signs around amounts like $14$.
+- All algebraic expressions, equations, and symbolic math must use ONLY \(...\) delimiters, never $...$ around formulas.
+- Ask the student to solve something concrete (e.g. find x, or find when two costs are equal).
+
+If you add bags/marbles and need a picture: visual_type "svg" and svg_spec per HARD REQUIREMENTS.
+
+Output: one JSON object, type "input".

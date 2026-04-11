@@ -1,4 +1,4 @@
-/** Heuristics for quantity stories and synthetic Plotly when the model omits a chart. */
+/** Heuristics for quantity stories and legacy chart JSON parsing (MCQ / old payloads). */
 
 export function extractAllIntegers(s) {
     const out = [];
@@ -75,6 +75,25 @@ export function responseNeedsNonEmptyPlotlyChart(q) {
     const analogy =
         /\b(think of (it|this) like|picture|imagine|like a (bag|jar|box)|number line)\b/.test(blob);
     return physical && (story || analogy);
+}
+
+/** Net inflow/outflow / rate stories (moat, pump, leak, …) — expect an SVG diagram like quantity tales. */
+export function rateOrNetChangeStoryNeedsSvg(q) {
+    if (!q || typeof q !== "object") return false;
+    const blob = `${String(q.text || "")} ${String(q.ideal_explanation || "")}`.toLowerCase();
+    if (!/\d/.test(blob)) return false;
+    const rateCue =
+        /\b(per hour|\/hour|each hour|every hour|liters? per|litres? per|net (gain|loss|change|increase|decrease))\b/.test(
+            blob
+        ) ||
+        /\b(inflow|outflow|pump|leak|drain|refill|moat|tank|reservoir)\b/.test(blob);
+    const unitCue = /\b(liter|litre|hour|hr|minute|min|gallon)\b/.test(blob);
+    return rateCue && unitCue;
+}
+
+/** True when combat JSON should include a non-empty svg_spec (marbles, bags, or rate/net-change tales). */
+export function combatQuestionRequiresSvgDiagram(q) {
+    return responseNeedsNonEmptyPlotlyChart(q) || rateOrNetChangeStoryNeedsSvg(q);
 }
 
 export function parsePlotlySpec(raw) {

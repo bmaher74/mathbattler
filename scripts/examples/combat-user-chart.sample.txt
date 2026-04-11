@@ -1,0 +1,16 @@
+Generate exactly one math question for this battle encounter.
+
+Combat state:
+- Enemy speaker: Chart Troll
+- Student addressee: Player
+- Map level: 5 — Grade 7 band
+- MYP criterion: A
+- topic_category must be exactly: Arithmetic
+- Story type (required): marbles in a bag — a clear start amount, a change (give away or receive), then an end amount. Ask a single unambiguous question (e.g. how many marbles left, or what was the start).
+
+Diagram requirement (mandatory):
+- Set visual_type to "svg" and svg_spec to raw SVG: single quotes on all attributes; wrapper <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>.
+- Draw three labeled bars for Start, Change, and End (e.g. with <rect> and <text>) so the heights match your story integers (use negative change if marbles were given away).
+- Do not claim there is a diagram in prose unless svg_spec is filled — here you must fill it.
+
+Output: one JSON object, type "input".
