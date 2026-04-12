@@ -17,7 +17,8 @@ const {
     mergeSkillProfiles,
     canonicalizeReportedTopic,
     pickBattlePinnedTopic,
-    pickRetentionTopic
+    pickRetentionTopic,
+    buildCombatQuestionUserPrompt
 } = await import(join(ROOT, "js/ai/prompts/combatQuestionPedagogy.js"));
 
 describe("enemyNameForMapLevel", () => {
@@ -100,5 +101,20 @@ describe("pickRetentionTopic", () => {
         const rng = () => 0.1;
         const t = pickRetentionTopic({}, rng);
         assert.ok(CANONICAL_SKILL_TOPICS.includes(t));
+    });
+});
+
+describe("buildCombatQuestionUserPrompt", () => {
+    it("passes hero evolution tier into the combat block for taunt tone", () => {
+        const b = buildCombatQuestionUserPrompt({
+            mapLevel: 4,
+            turnIndex: 0,
+            skillProfile: null,
+            strandRotationSeq: 0,
+            playerName: "Test",
+            enemyName: "Goblin",
+            cosmeticsTier: 4
+        });
+        assert.match(b.prompt, /Hero evolution tier[^\n]*: 4/);
     });
 });

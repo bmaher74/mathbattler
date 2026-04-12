@@ -4,3 +4,4 @@ node_modules/
 *.swp
 .env.local
 .DS_Store
+logs/

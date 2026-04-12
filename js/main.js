@@ -4,6 +4,16 @@ import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://
 
 import { ASSETS, BOSS_ASSETS } from "./assets.js";
 import {
+    MAX_COSMETIC_TIER,
+    COSMETIC_EVOLUTION_OPTIONS,
+    buildCosmeticEvolutionExtra,
+    buildHeroWeaponOverlay,
+    cosmeticEvolutionTitle,
+    weaponDamageMultiplier
+} from "./cosmeticEvolution.js";
+import { pickEnemyTaunt } from "./enemyTaunts.js";
+import { startMapBgmFromUserGesture, startCombatBgmFromUserGesture, wireBgmVisibility } from "./bgm.js";
+import {
     appId,
     state,
     safeSet,
@@ -473,11 +483,12 @@ function mergeProfileRecords(cloudDoc, localDoc) {
         typeof c.shards === "number" ? Math.floor(c.shards) : 0,
         typeof l.shards === "number" ? Math.floor(l.shards) : 0
     );
-    const cosmeticsTier = Math.max(
+    const cosmeticsTierRaw = Math.max(
         0,
         typeof c.cosmeticsTier === "number" ? Math.floor(c.cosmeticsTier) : 0,
         typeof l.cosmeticsTier === "number" ? Math.floor(l.cosmeticsTier) : 0
     );
+    const cosmeticsTier = Math.min(MAX_COSMETIC_TIER, cosmeticsTierRaw);
     const bestiary = (() => {
         const arrC = Array.isArray(c.bestiary) ? c.bestiary : [];
         const arrL = Array.isArray(l.bestiary) ? l.bestiary : [];
@@ -1115,6 +1126,7 @@ async function initFirebase() {
      safeSet('welcome-player-text', name);
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('level-screen').classList.remove('hidden');
+    void startMapBgmFromUserGesture();
     renderPlayerSprite();
     renderLevelMenu();
     syncAiRouteNotice();
@@ -1128,27 +1140,32 @@ async function initFirebase() {
     void syncCurrentProfileToCloud();
 };
  function renderPlayerSprite() {
-    const tier = typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0;
+    const tier = Math.min(
+        MAX_COSMETIC_TIER,
+        Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0))
+    );
     const base = ASSETS.wizard;
     if (tier <= 0) {
         safeSet("player-sprite", base, "innerHTML");
         return;
     }
-    // Cosmetic layering: add extra glyphs/aura around the existing wizard SVG.
     const inner = svgInnerMarkup(base);
-    const extra =
-        tier === 1
-            ? `<g opacity="0.85">
-                   <circle cx="50" cy="54" r="36" fill="none" stroke="#a5b4fc" stroke-width="2" opacity="0.55"/>
-                   <polygon points="50,12 56,26 72,28 60,38 64,54 50,46 36,54 40,38 28,28 44,26" fill="#7c3aed" opacity="0.25"/>
-               </g>`
-            : `<g opacity="0.9">
-                   <circle cx="50" cy="54" r="38" fill="none" stroke="#facc15" stroke-width="2" opacity="0.35"/>
-                   <circle cx="50" cy="54" r="30" fill="none" stroke="#a78bfa" stroke-width="2" opacity="0.35"/>
-                   <path d="M20 76 Q50 52 80 76" fill="none" stroke="#60a5fa" stroke-width="3" opacity="0.35"/>
-               </g>`;
-    const upgraded = `<svg viewBox="10 -12 100 106" class="w-full h-full drop-shadow-[0_10px_20px_rgba(59,130,246,0.6)]" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">${inner}${extra}</svg>`;
+    const weapon = buildHeroWeaponOverlay(tier);
+    const extra = buildCosmeticEvolutionExtra(tier);
+    const upgraded = `<svg viewBox="10 -12 100 106" class="w-full h-full drop-shadow-[0_10px_20px_rgba(59,130,246,0.6)]" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">${inner}${weapon}${extra}</svg>`;
     safeSet("player-sprite", upgraded, "innerHTML");
+}
+ function updateEnemyTauntLine() {
+    const el = document.getElementById("enemy-taunt");
+    if (!el) return;
+    const meta = getQuestNode(state.currentLevel) || {};
+    const bossName = String(meta.name || "Boss").trim() || "Boss";
+    el.textContent = pickEnemyTaunt({
+        level: state.currentLevel,
+        cosmeticsTier: typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0,
+        turnIndex: typeof state.turnIndex === "number" ? state.turnIndex : 0,
+        bossName
+    });
 }
  function syncShardsUi() {
     safeSet("shards-count", String(Math.max(0, Math.floor(state.shards || 0))));
@@ -1239,45 +1256,72 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
     safeSet("upgrades-shards", String(Math.max(0, Math.floor(state.shards || 0))));
     const list = document.getElementById("upgrades-list");
     if (!list) return;
-    const tier = typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0;
-    const options = [
-        { tier: 1, cost: 100, title: "Staff of Geometry", desc: "A sharper aura around your cloak." },
-        { tier: 2, cost: 250, title: "Axiom Halo", desc: "Golden rings of logic orbit you." }
-    ];
-    list.innerHTML = options
-        .map((o) => {
-            const owned = tier >= o.tier;
-            const canBuy = !owned && (state.shards || 0) >= o.cost;
-            return `
+    const curTier = Math.min(
+        MAX_COSMETIC_TIER,
+        Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0))
+    );
+    const shards = Math.max(0, Math.floor(state.shards || 0));
+    list.innerHTML = COSMETIC_EVOLUTION_OPTIONS.map((o) => {
+        const evolved = curTier >= o.tier;
+        const isNext = o.tier === curTier + 1;
+        const locked = o.tier > curTier + 1;
+        const canEvolve = isNext && !locked && shards >= o.cost;
+        let btnLabel;
+        let btnClass;
+        let disabled = true;
+        if (evolved) {
+            btnLabel = "Evolved";
+            btnClass = "border-slate-600 bg-slate-900/40 text-slate-400";
+        } else if (locked) {
+            btnLabel = "Locked";
+            btnClass = "border-slate-700 bg-slate-900/30 text-slate-500";
+        } else if (isNext) {
+            disabled = !canEvolve;
+            btnLabel = canEvolve ? "Evolve" : "Need shards";
+            btnClass = canEvolve
+                ? "border-emerald-600 bg-emerald-700/30 hover:bg-emerald-600/40 text-emerald-100"
+                : "border-slate-700 bg-slate-900/30 text-slate-500";
+        } else {
+            btnLabel = "—";
+            btnClass = "border-slate-700 bg-slate-900/30 text-slate-500";
+        }
+        return `
             <div class="border border-slate-700 rounded-xl bg-slate-900/40 p-4">
                 <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
-                        <div class="font-black text-slate-100">${o.title}</div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-[10px] font-black uppercase tracking-wider text-indigo-300/90 border border-indigo-500/50 px-2 py-0.5 rounded-md">Stage ${o.stage}</span>
+                            <div class="font-black text-slate-100">${o.title}</div>
+                        </div>
                         <div class="text-[12px] text-slate-400 mt-1">${o.desc}</div>
                     </div>
                     <div class="shrink-0 text-right">
-                        <div class="text-xs font-black uppercase text-amber-200">${owned ? "Owned" : `${o.cost} shards`}</div>
-                        <button type="button" ${canBuy ? "" : "disabled"}
+                        <div class="text-xs font-black uppercase text-amber-200">${evolved ? "Unlocked" : `${o.cost} shards`}</div>
+                        <button type="button" ${disabled ? "disabled" : ""}
                             onclick="buyUpgrade(${o.tier}, ${o.cost})"
-                            class="mt-2 px-3 py-2 rounded-lg text-xs font-black uppercase border ${canBuy ? "border-emerald-600 bg-emerald-700/30 hover:bg-emerald-600/40" : owned ? "border-slate-700 bg-slate-900/30 text-slate-400" : "border-slate-700 bg-slate-900/30 text-slate-500"}">
-                            ${owned ? "Equipped" : canBuy ? "Buy" : "Need more"}
+                            class="mt-2 px-3 py-2 rounded-lg text-xs font-black uppercase border ${btnClass}">
+                            ${btnLabel}
                         </button>
                     </div>
                 </div>
             </div>`;
-        })
-        .join("");
+    }).join("");
 }
  window.buyUpgrade = (tier, cost) => {
     const t = Math.max(0, Math.floor(tier || 0));
     const c = Math.max(0, Math.floor(cost || 0));
-    const curTier = Math.max(0, Math.floor(state.cosmeticsTier || 0));
-    if (t <= curTier) return;
+    const curTier = Math.min(
+        MAX_COSMETIC_TIER,
+        Math.max(0, Math.floor(state.cosmeticsTier || 0))
+    );
+    if (t > MAX_COSMETIC_TIER || t < 1) return;
+    if (t !== curTier + 1) return;
     const shards = Math.max(0, Math.floor(state.shards || 0));
     if (shards < c) return;
     state.shards = shards - c;
     state.cosmeticsTier = t;
     renderPlayerSprite();
+    showUpgradeCelebration(t);
     syncShardsUi();
     renderUpgrades();
     if (state.playerName) saveLocalProfile(state.playerName);
@@ -1335,6 +1379,7 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
         console.warn("analyzeEnemy:", e);
     }
 };
+ let upgradeCelebrationHideTimer = null;
  let fetchPromise = null;
 /** Level the in-flight `fetchPromise` was built for; null if none. */
 let prefetchPromiseForLevel = null;
@@ -1845,6 +1890,10 @@ const FALLBACK_QUESTIONS = [
         enemyName: String(getQuestNode(mapLevel)?.name || "Enemy"),
         activeQuestionText: state.activeQuestion?.text ?? null,
         pinnedTopic: pinned,
+        cosmeticsTier: Math.min(
+            MAX_COSMETIC_TIER,
+            Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0))
+        ),
         rng: Math.random
     });
     const m = bundle.meta || {};
@@ -2294,23 +2343,29 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     state._battleParticipation = { firstCastDone: false, reflectionDone: false };
     const combo = document.getElementById("combo-badge");
     if (combo) combo.classList.add("hidden");
+    let qMeta = getQuestNode(level);
+    safeSet('enemy-name', qMeta.name);
+    safeSet('enemy-lvl-display', level);
+    const spriteEl = document.getElementById("enemy-sprite");
+    if (spriteEl) spriteEl.innerHTML = battleBossSvgMarkup(level);
+    updateHP();
+
+    // Instantly transition the UI (before any await — keeps BGM audio.play() in user-gesture chain on all levels)
+    document.getElementById('level-screen').classList.add('hidden');
+    document.getElementById('battle-screen').classList.remove('hidden');
+    void startCombatBgmFromUserGesture();
     if (level > QUEST_ROUTE.length) {
         try {
             await ensureGeneratedBossForLevel(level);
         } catch (e) {
             console.warn("Boss generation failed; using fallback art:", e);
         }
+        qMeta = getQuestNode(level);
+        safeSet('enemy-name', qMeta.name);
+        safeSet('enemy-lvl-display', level);
+        if (spriteEl) spriteEl.innerHTML = battleBossSvgMarkup(level);
+        updateHP();
     }
-    const qMeta = getQuestNode(level);
-    safeSet('enemy-name', qMeta.name);
-    safeSet('enemy-lvl-display', level);
-    const spriteEl = document.getElementById("enemy-sprite");
-    if (spriteEl) spriteEl.innerHTML = battleBossSvgMarkup(level);
-    updateHP();
-    
-    // Instantly transition the UI so the user isn't stuck waiting
-    document.getElementById('level-screen').classList.add('hidden');
-    document.getElementById('battle-screen').classList.remove('hidden');
      if (!state.nextQuestion) {
         document.getElementById('question-text').innerText = "Summoning math magic...";
         document.getElementById('mcq-grid').innerHTML = '';
@@ -2353,6 +2408,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     }
     state.activeQuestion = q;
     rememberQuestionStem(q.text);
+    updateEnemyTauntLine();
     state.forceEasierNextQuestion = false;
     if (q._questionSource === "dashscope" || q._questionSource === "openrouter" || q._questionSource === "gemini") {
         clearPrefetchFailureUi();
@@ -2387,8 +2443,104 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
  function showDamage(id, amt) {
     const el = document.getElementById(id);
     el.innerText = `-${amt}`;
-    el.classList.add('animate-damage');
-    setTimeout(() => el.classList.remove('animate-damage'), 1000);
+    el.classList.remove("animate-damage");
+    void el.offsetWidth;
+    el.classList.add("animate-damage");
+    setTimeout(() => el.classList.remove("animate-damage"), 1000);
+}
+ function clearCombatJuiceClasses() {
+    document.getElementById("player-sprite")?.classList.remove("combat-player-lunge", "combat-player-hit");
+    document.getElementById("enemy-sprite")?.classList.remove("combat-enemy-lunge", "combat-enemy-hit");
+    document.getElementById("battle-impact-flash")?.classList.remove("battle-flash-on");
+}
+ /**
+ * Pokémon TCG–style strike: hero lunge → impact flash → HP + floating numbers → optional enemy counter lunge.
+ * Resolves after the sequence so the solution overlay does not cover the hit moment.
+ */
+ function playCombatStrikeSequence(dmg, hitStop) {
+    return new Promise((resolve) => {
+        const bS = document.getElementById("battle-screen");
+        const fb = document.getElementById("combat-feedback");
+        const flash = document.getElementById("battle-impact-flash");
+        const pSprite = document.getElementById("player-sprite");
+        const eSprite = document.getElementById("enemy-sprite");
+        const tHit = 260 + (hitStop || 0);
+
+        const applyHpAndNumbers = () => {
+            if (fb) fb.style.opacity = "0";
+            if (dmg.enemy > 0) {
+                if (bS) bS.classList.add("animate-shake");
+                state.enemyHP = Math.max(0, state.enemyHP - dmg.enemy);
+                showDamage("enemy-damage", dmg.enemy);
+            }
+            if (dmg.player > 0) {
+                state.playerHP = Math.max(0, state.playerHP - dmg.player);
+                showDamage("player-damage", dmg.player);
+            }
+            updateHP();
+        };
+
+        const finish = () => {
+            clearCombatJuiceClasses();
+            if (bS) bS.classList.remove("animate-shake");
+            resolve();
+        };
+
+        if (dmg.enemy > 0) {
+            pSprite?.classList.add("combat-player-lunge");
+            setTimeout(() => flash?.classList.add("battle-flash-on"), 110);
+            setTimeout(() => flash?.classList.remove("battle-flash-on"), 230);
+            setTimeout(() => {
+                eSprite?.classList.add("combat-enemy-hit");
+                applyHpAndNumbers();
+                pSprite?.classList.remove("combat-player-lunge");
+                if (dmg.player > 0) {
+                    setTimeout(() => {
+                        eSprite?.classList.remove("combat-enemy-hit");
+                        eSprite?.classList.add("combat-enemy-lunge");
+                        pSprite?.classList.add("combat-player-hit");
+                        if (bS) bS.classList.add("animate-shake");
+                        setTimeout(finish, 480);
+                    }, 140);
+                } else {
+                    setTimeout(finish, 400);
+                }
+            }, tHit);
+        } else if (dmg.player > 0) {
+            setTimeout(() => {
+                eSprite?.classList.add("combat-enemy-lunge");
+                pSprite?.classList.add("combat-player-hit");
+                if (bS) bS.classList.add("animate-shake");
+                applyHpAndNumbers();
+                setTimeout(finish, 520);
+            }, 200);
+        } else {
+            if (fb) fb.style.opacity = "0";
+            setTimeout(finish, 60);
+        }
+    });
+}
+ function showUpgradeCelebration(tier) {
+    const root = document.getElementById("upgrade-celebration");
+    const art = document.getElementById("upgrade-celebration-art");
+    const titleEl = document.getElementById("upgrade-celebration-title");
+    const ps = document.getElementById("player-sprite");
+    if (!root || !art || !titleEl) return;
+    if (ps) art.innerHTML = ps.innerHTML;
+    const ti = Math.min(MAX_COSMETIC_TIER, Math.max(1, Math.floor(tier || 1)));
+    const opt = COSMETIC_EVOLUTION_OPTIONS.find((x) => x.tier === ti);
+    titleEl.textContent = opt ? `Stage ${opt.stage} — ${opt.title}` : cosmeticEvolutionTitle(ti);
+    root.classList.remove("hidden");
+    root.classList.remove("upgrade-celebration-visible");
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => root.classList.add("upgrade-celebration-visible"));
+    });
+    if (upgradeCelebrationHideTimer != null) clearTimeout(upgradeCelebrationHideTimer);
+    upgradeCelebrationHideTimer = setTimeout(() => {
+        upgradeCelebrationHideTimer = null;
+        root.classList.remove("upgrade-celebration-visible");
+        setTimeout(() => root.classList.add("hidden"), 420);
+    }, 2600);
 }
  function showDetailedFeedback(msg) {
     const pf = document.getElementById("personalized-feedback");
@@ -2861,7 +3013,8 @@ window.nextPracticeQuestion = async () => {
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
         const comboMult = state.comboActive ? COMBAT_COMBO_MULT : 1.0;
-        let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult) : 0;
+        const weaponMult = weaponDamageMultiplier(state.cosmeticsTier);
+        let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult * weaponMult) : 0;
         let playerDmg = dmg0.player;
         if (state.nextEnemyAttackZero && playerDmg > 0) {
             playerDmg = 0;
@@ -2878,23 +3031,10 @@ window.nextPracticeQuestion = async () => {
         fb.className = `absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 ${
             dmg.enemy > 0 ? "border-green-500 text-green-400" : "border-red-500 text-red-400"
         } p-4 rounded-xl text-center z-40 opacity-100 font-black text-2xl`;
-         const hitStop = state.currentLevel >= 7 && (judged.band === "correct_with_reasoning" || dmg.isCrit === true) ? 100 : 0;
-        setTimeout(() => {
-            fb.style.opacity = 0;
-            if (dmg.enemy > 0) {
-                if (bS) bS.classList.add("animate-shake");
-                state.enemyHP = Math.max(0, state.enemyHP - dmg.enemy);
-                showDamage("enemy-damage", dmg.enemy);
-            }
-            if (dmg.player > 0) {
-                state.playerHP = Math.max(0, state.playerHP - dmg.player);
-                showDamage("player-damage", dmg.player);
-            }
-            updateHP();
-        }, 350 + hitStop);
-         // Advance criterion rotation.
+        fb.style.opacity = "1";
+        const hitStop = state.currentLevel >= 7 && (judged.band === "correct_with_reasoning" || dmg.isCrit === true) ? 100 : 0;
+        await playCombatStrikeSequence(dmg, hitStop);
         state.turnIndex++;
-         // Personalized feedback becomes the judge feedback; ideal explanation remains teacher notes.
         const header =
             judged.band === "correct_with_reasoning"
                 ? "Great structure — full credit."
@@ -2906,7 +3046,6 @@ window.nextPracticeQuestion = async () => {
         state.requireReflection = judged.band === "incorrect" || judged.band === "partial";
         const potionNote = state.potionUsedThisBattle && dmg0.player > 0 && dmg.player === 0 ? "\n\nHealth Potion: You were saved from defeat — next question will be easier." : "";
         showDetailedFeedback(`${header}\n\n${judged.feedback}${potionNote}`);
-         // End battle if needed after the overlay close loads the next question.
         if (state.enemyHP <= 0 || state.playerHP <= 0) {
             finishBattle(state.enemyHP <= 0);
         }
@@ -2917,7 +3056,8 @@ window.nextPracticeQuestion = async () => {
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
         const comboMult = state.comboActive ? COMBAT_COMBO_MULT : 1.0;
-        let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult) : 0;
+        const weaponMultFb = weaponDamageMultiplier(state.cosmeticsTier);
+        let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult * weaponMultFb) : 0;
         let playerDmg = dmg0.player;
         if (state.nextEnemyAttackZero && playerDmg > 0) {
             playerDmg = 0;
@@ -2934,25 +3074,17 @@ window.nextPracticeQuestion = async () => {
         fb.className = `absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 ${
             dmg.enemy > 0 ? "border-green-500 text-green-400" : "border-red-500 text-red-400"
         } p-4 rounded-xl text-center z-40 opacity-100 font-black text-2xl`;
-        setTimeout(() => {
-            fb.style.opacity = 0;
-            if (dmg.enemy > 0) {
-                if (bS) bS.classList.add("animate-shake");
-                state.enemyHP = Math.max(0, state.enemyHP - dmg.enemy);
-                showDamage("enemy-damage", dmg.enemy);
-            }
-            if (dmg.player > 0) {
-                state.playerHP = Math.max(0, state.playerHP - dmg.player);
-                showDamage("player-damage", dmg.player);
-            }
-            updateHP();
-        }, 350);
+        fb.style.opacity = "1";
+        await playCombatStrikeSequence(dmg, 0);
         state.turnIndex++;
         state.requireReflection = judged.band === "incorrect" || judged.band === "partial";
         const potionNote = state.potionUsedThisBattle && dmg0.player > 0 && dmg.player === 0 ? "\n\nHealth Potion: You were saved from defeat — next question will be easier." : "";
         showDetailedFeedback(
             `Judge spell fizzled (AI grading failed), so I used a safe fallback grade.\n\n${judged.feedback}${potionNote}`
         );
+        if (state.enemyHP <= 0 || state.playerHP <= 0) {
+            finishBattle(state.enemyHP <= 0);
+        }
     } finally {
         if (castBtn) castBtn.disabled = false;
         if (bS) bS.classList.remove("animate-shake");
@@ -3007,6 +3139,7 @@ window.nextPracticeQuestion = async () => {
     closeAllMapHudOverlays();
     document.getElementById('battle-screen').classList.add('hidden');
     document.getElementById('level-screen').classList.remove('hidden');
+    void startMapBgmFromUserGesture();
     state.battlePinnedTopic = null;
     state.turnIndex = 0;
     state.isAnimating = false;
@@ -3121,6 +3254,7 @@ function wireMapHudButtons() {
     });
 }
 wireMapHudButtons();
+wireBgmVisibility();
  loadRecentStems();
 state.bossCacheByLevel = loadBossCache();
 runRegressions();

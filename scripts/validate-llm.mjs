@@ -71,6 +71,7 @@ function parseArgs(argv) {
         combatLiveUser: /** @type {string | null} */ (null),
         combatMapLevel: /** @type {number | null} */ (null),
         combatTurnIndex: /** @type {number | null} */ (null),
+        combatCosmeticsTier: /** @type {number | null} */ (null),
         combatEasier: false
     };
     for (let i = 2; i < argv.length; i++) {
@@ -127,6 +128,8 @@ function parseArgs(argv) {
             out.combatMapLevel = parseInt(argv[++i], 10);
         } else if (a === "--combat-turn-index" && argv[i + 1]) {
             out.combatTurnIndex = parseInt(argv[++i], 10);
+        } else if (a === "--combat-cosmetics-tier" && argv[i + 1]) {
+            out.combatCosmeticsTier = parseInt(argv[++i], 10);
         } else if (a === "--combat-easier") {
             out.combatEasier = true;
         }
@@ -592,6 +595,10 @@ async function runCombatLab(cfg, args) {
             Number.isFinite(args.combatTurnIndex) && args.combatTurnIndex >= 0
                 ? Math.floor(args.combatTurnIndex)
                 : 0;
+        const cosmeticsTier =
+            Number.isFinite(args.combatCosmeticsTier) && args.combatCosmeticsTier >= 0
+                ? Math.floor(args.combatCosmeticsTier)
+                : 0;
         const bundle = buildCombatQuestionUserPrompt({
             mapLevel,
             forceEasierNextQuestion: args.combatEasier === true,
@@ -602,6 +609,7 @@ async function runCombatLab(cfg, args) {
             enemyName: enemyNameForMapLevel(mapLevel),
             activeQuestionText: null,
             pinnedTopic: null,
+            cosmeticsTier,
             rng: Math.random
         });
         userText = bundle.prompt;
@@ -802,6 +810,7 @@ COMBAT LAB
                                 (embedded getCombatQuestionSystemPrompt() from the repo).
      --combat-map-level N       Override map level (default: profile unlockedLevels, else 4).
      --combat-turn-index N      MYP criterion rotation A–D (default 0). Not stored in cloud — CLI only.
+     --combat-cosmetics-tier N  Hero evolution tier 0–5 (default 0). Seeds taunt/delivery variety in the combat user prompt.
      --combat-easier            Same as in-game remedial / easier band.
 
 JSON OUTPUT (combat only): --json-mode MODE
