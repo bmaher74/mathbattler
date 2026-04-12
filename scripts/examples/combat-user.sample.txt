@@ -12,7 +12,7 @@ Combat state:
 - topic_category must be exactly: Algebra
 - Core math: variables, expressions, equations, or inequalities
 
-Output: one JSON object only. type "input". Ensure valid JSON (escape quotes inside strings). Follow HARD REQUIREMENTS for visual_type and svg_spec.
+Output: one JSON object only. type "input". Ensure valid JSON (escape quotes inside strings). Follow HARD REQUIREMENTS for visual_type, visual_spec, and plotly_spec.
 
 STRICT JSON SHAPE (must all be present; stem lives in "text" or "text_blocks", not inside "stem"):
 - _thought_process (string)
@@ -22,6 +22,7 @@ STRICT JSON SHAPE (must all be present; stem lives in "text" or "text_blocks", n
 - expected_answer (short)
 - success_criteria (one string, lines starting "- ")
 - ideal_explanation (max 4 sentences, student-facing only)
-- visual_type ("none" or "svg")
-- svg_spec ("" or raw SVG)
+- visual_type ("none", "gom", or "plotly")
+- visual_spec (null, or GOM object when visual_type is gom)
+- plotly_spec ("" or Plotly JSON string when visual_type is plotly)
 - type: "input"

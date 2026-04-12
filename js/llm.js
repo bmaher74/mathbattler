@@ -8,6 +8,8 @@ import {
 import { composeCombatStemTextFromBlocks } from "./ai/combatTextBlocks.js";
 import { runDashScopeJudge } from "./ai/runDashScopeJudge.js";
 import { localFallbackJudge } from "./ai/localFallbackJudge.js";
+import { hasRenderableCombatVisual } from "./ai/combatVisualSvg.js";
+import { synthesizeQuantityStoryPlotlySpec } from "./ai/plotlyQuestionHeuristics.js";
 
 function readConfigString(v) {
     if (v == null) return "";
@@ -1168,7 +1170,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Show the inverse operation.\n- Write the final value of $x$.\n- Quick check by substituting back.",
         ideal_explanation: "Subtract $5$ from both sides: $x = 12 - 5 = 7$. Check: $7+5=12$.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1179,7 +1182,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Use correct order of operations.\n- Show the intermediate multiplication.",
         ideal_explanation: "Multiply first: $3 \\times 4 = 12$, then $2 + 12 = 14$.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1190,7 +1194,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Use a common denominator.\n- Combine numerators.\n- Simplify if needed.",
         ideal_explanation: "Use a common denominator: $\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}$.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1201,7 +1206,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Correct subtraction.\n- Final statement.",
         ideal_explanation: "Subtract: $8 - 3 = 5$.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1212,7 +1218,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- State the perimeter rule.\n- Show multiplication.\n- Include units if given.",
         ideal_explanation: "Perimeter of a square is $4 \\times \\text{side} = 4 \\times 4 = 16$.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1223,7 +1230,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Correct division.\n- Final statement.",
         ideal_explanation: "$9 \\div 3 = 3$.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     }
 ];
@@ -1254,69 +1262,6 @@ function normalizeLatexCurrency(s) {
     // Some models emit `$15` inside math mode without escaping: `$ $15 $` etc. Try to fix that too.
     out = out.replace(/\$\s*\$\s*([0-9]+(?:\.[0-9]+)?)\s*\$/g, (_, amt) => `\\$${amt}`);
     return out;
-}
- function extractAllIntegers(s) {
-    const out = [];
-    if (s == null) return out;
-    const text = String(s);
-    const re = /-?\d+/g;
-    let m;
-    while ((m = re.exec(text))) {
-        const n = parseInt(m[0], 10);
-        if (!Number.isNaN(n)) out.push(n);
-    }
-    return out;
-}
- function synthesizeQuantityStorySvgSpec(q) {
-    const blob = `${String(q?.text || "")} ${String(q?.ideal_explanation || "")}`.toLowerCase();
-    const ints = extractAllIntegers(blob);
-    if (ints.length < 2) return "";
-    const a = ints[ints.length - 2];
-    const b = ints[ints.length - 1];
-    let change = a;
-    let end = b;
-    const isSubtractStory = /\b(spend|spent|gave away|give away|lost|take away|take out|removed|minus|left)\b/.test(blob);
-    const isAddStory = /\b(add|added|got|received|plus|more)\b/.test(blob);
-    if (isAddStory && a > b) {
-        change = b;
-        end = a;
-    } else if (isSubtractStory && a < b) {
-        change = b;
-        end = a;
-    }
-    const absChange = Math.abs(change);
-    let start = isSubtractStory ? end + absChange : end - absChange;
-    if (!Number.isFinite(start)) start = end - Math.abs(change);
-    const signedChange = isSubtractStory ? -absChange : absChange;
-    const vals = [start, signedChange, end];
-    const maxAbs = Math.max(1, ...vals.map((v) => Math.abs(v)));
-    const labels = ["Start", "Chg", "End"];
-    const colors = ["#60a5fa", signedChange < 0 ? "#f87171" : "#34d399", "#fbbf24"];
-    const bw = 22;
-    const gap = 6;
-    const baseY = 88;
-    const maxH = 62;
-    let x = 10;
-    const parts = [];
-    for (let i = 0; i < 3; i++) {
-        const v = vals[i];
-        const h = Math.round((Math.abs(v) / maxAbs) * maxH);
-        const y = baseY - h;
-        parts.push(
-            `<rect x='${x}' y='${y}' width='${bw}' height='${h}' fill='${colors[i]}' stroke='black' stroke-width='0.6'/>`
-        );
-        parts.push(
-            `<text x='${x + bw / 2}' y='${96}' font-size='5' text-anchor='middle' fill='#e5e7eb'>${labels[i]}</text>`
-        );
-        x += bw + gap;
-    }
-    return `<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>${parts.join("")}</svg>`;
-}
- function hasRenderableCombatSvg(q) {
-    if (!q || q.visual_type !== "svg") return false;
-    const s = String(q.svg_spec ?? "").trim();
-    if (s.length < 12) return false;
-    return /<svg[\s>]/i.test(s) && /viewBox\s*=\s*['"]/i.test(s);
 }
  /** True when text + explanation use concrete quantities / stories that should always get a diagram. */
 function responseNeedsNonEmptyPlotlyChart(q) {
@@ -1475,11 +1420,9 @@ CREATIVITY & VARIATION (must follow):
 
 For ideal_explanation: write as if explaining to a smart 10-year-old — short sentences, everyday words, friendly tone, optional one simple analogy; still be mathematically correct and use LaTeX for formulas. Do not sound like a dry textbook abstract.
 
-For diagrams vs words: Use visual_type "svg" and svg_spec for diagrams. If visual_type is "none", do NOT say there is a graph, picture, chart, or diagram in "text" or "ideal_explanation". Inside svg_spec use raw SVG only: SINGLE QUOTES for all SVG attributes (never double quotes inside the SVG string), and wrap with <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>. The app renders svg_spec — promising a visual without filling it is wrong.
+For diagrams vs words: Follow system prompt §5 (GOM vs Plotly). Use visual_type "gom" + visual_spec for schematics, or "plotly" + plotly_spec (JSON string) for charts/bars/data. If visual_type is "none", do NOT say there is a graph, picture, chart, or diagram in "text" or "ideal_explanation".
 
-When a diagram helps (geometry, or quantity stories with Start/Change/End), use a minimal SVG (primitives: rect, line, text). Reserve visual_type "none" only when a diagram would add nothing.
-
-STRICT (addition/subtraction & stories): If the question OR ideal_explanation involves marbles, apples, cookies, toys, a bag/jar/box, "gave away", "started with", "take out", "how many left", "in all", or any similar real-world quantity story, you MUST set visual_type to "svg" and provide svg_spec with a simple bar-style SVG (three rects for Start, Change, End) using the single-quote rule.`;
+STRICT (addition/subtraction & stories): If the question OR ideal_explanation involves marbles, apples, cookies, toys, a bag/jar/box, "gave away", "started with", "take out", "how many left", "in all", or any similar real-world quantity story, you MUST include a diagram: prefer visual_type "plotly" with a bar chart in plotly_spec (JSON string), or "gom" + visual_spec for a schematic.`;
 }
  function parseModelJsonContent(content) {
     if (content == null) throw new Error("empty model content");
@@ -1528,12 +1471,17 @@ STRICT (addition/subtraction & stories): If the question OR ideal_explanation in
     if (q.type !== "input") throw new Error('type must be "input"');
     if (q.topic_category == null) q.topic_category = "Math";
     if (q.visual_type == null) q.visual_type = "none";
-    if (q.svg_spec == null) q.svg_spec = "";
-    if (responseNeedsNonEmptyPlotlyChart(q) && !hasRenderableCombatSvg(q)) {
-        const synthesized = synthesizeQuantityStorySvgSpec(q);
+    if (q.visual_spec === undefined) q.visual_spec = null;
+    if (q.plotly_spec == null) q.plotly_spec = "";
+    delete q.svg_spec;
+    const vtl = String(q.visual_type).toLowerCase();
+    if (vtl === "svg") q.visual_type = "none";
+    if (responseNeedsNonEmptyPlotlyChart(q) && !hasRenderableCombatVisual(q)) {
+        const synthesized = synthesizeQuantityStoryPlotlySpec(q);
         if (synthesized) {
-            q.visual_type = "svg";
-            q.svg_spec = synthesized;
+            q.visual_type = "plotly";
+            q.plotly_spec = synthesized;
+            q.visual_spec = null;
         }
     }
 }
@@ -1669,11 +1617,11 @@ STRICT (addition/subtraction & stories): If the question OR ideal_explanation in
         '- criterion must be one of "A", "B", "C", "D" (same letter as MYP criterion focus in the prompt).\n' +
         "- expected_answer: the canonical final answer as a short string (may include LaTeX).\n" +
         "- success_criteria: 2–5 bullet points (as a single string). Each bullet must describe text evidence that would justify achievement levels 7–8 for the targeted criterion letter ONLY. Do not bundle other criteria into these bullets.\n" +
-        '- visual_type: "svg" or "none". svg_spec: raw SVG when visual_type is svg, else "".\n' +
+        '- visual_type: "none", "gom", or "plotly". visual_spec: null or GOM object. plotly_spec: "" or Plotly JSON string.\n' +
         "- Curriculum: keep within IB MYP Year 7–8 scope and obey the band indicated in the prompt; avoid calculus/trig/logs/quadratic formula.\n" +
-        "- REQUIRED for quantity stories (marbles, bags, gave away, …): visual_type \"svg\" and a non-empty svg_spec with single-quoted SVG attributes and viewBox='0 0 100 100'.\n" +
+        "- REQUIRED for quantity stories (marbles, bags, gave away, …): visual_type \"plotly\" with non-empty plotly_spec (bar chart) or \"gom\" with visual_spec per system §5.\n" +
         "- ideal_explanation: short teacher-style solution steps and a quick check; LaTeX for math; keep it readable for Year 7/8.\n" +
-        "\nReturn one JSON object with keys: topic_category, criterion, expected_answer, success_criteria, ideal_explanation, visual_type, svg_spec, type, and exactly ONE of: text (string) OR text_blocks (array of prose/inline_math objects). Use text_blocks when US dollars and algebra appear together. No markdown, no code fences."
+        "\nReturn one JSON object with keys: topic_category, criterion, expected_answer, success_criteria, ideal_explanation, visual_type, visual_spec, plotly_spec, type, and exactly ONE of: text (string) OR text_blocks (array of prose/inline_math objects). Use text_blocks when US dollars and algebra appear together. No markdown, no code fences."
     );
 }
  async function fetchQuestionViaDashScope(dashscopeKey, basePrompt) {
@@ -1686,7 +1634,7 @@ STRICT (addition/subtraction & stories): If the question OR ideal_explanation in
     const systemMsg = {
         role: "system",
         content:
-            "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. For word problems with objects (marbles, apples, bags) or addition/subtraction stories, include visual_type \"svg\" and svg_spec as raw SVG (single-quoted attributes, viewBox='0 0 100 100')."
+            "You output exactly one valid JSON object and nothing else. No markdown code fences, no commentary. Use double quotes for JSON strings. For word problems with objects (marbles, apples, bags) or addition/subtraction stories, include a diagram: visual_type \"plotly\" with plotly_spec as a JSON string (bar chart), or \"gom\" with visual_spec per instructions."
     };
     const questionBackoff = { min429DelayMs: 3500, maxDelayMs: 22000, initialDelayMs: 1000 };
      const callModel = async (userContent) => {
@@ -1756,19 +1704,17 @@ STRICT (addition/subtraction & stories): If the question OR ideal_explanation in
     // Enforce SVG for quantity stories (especially marbles). Retry a few times if the model ignores it.
     if (responseNeedsNonEmptyPlotlyChart(parsed)) {
         const chartRetries = 3;
-        for (let i = 0; i < chartRetries && !hasRenderableCombatSvg(parsed); i++) {
+        for (let i = 0; i < chartRetries && !hasRenderableCombatVisual(parsed); i++) {
             parsed = await callModel(
                 basePrompt +
                     dashScopeQuestionUserSuffix() +
                     "\n\nYour previous JSON was rejected: it used a marble/bag/object quantity story, so you MUST include a diagram.\n" +
-                    'Set visual_type to "svg" and svg_spec to raw SVG.\n' +
-                    "Use SINGLE QUOTES for all SVG attributes. Standard wrapper: <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>.\n" +
-                    "Put diagrams only in svg_spec (SVG)."
+                    'Set visual_type to "plotly" and plotly_spec to a JSON string with a Plotly bar chart (Start/Change/End), or use "gom" + visual_spec for a schematic per system §5.'
             );
             parsed = await ensureStemNotInRecentHistory(parsed);
         }
-        if (!hasRenderableCombatSvg(parsed)) {
-            throw new Error("DashScope returned no valid SVG in svg_spec for a quantity story (diagram required)");
+        if (!hasRenderableCombatVisual(parsed)) {
+            throw new Error("DashScope returned no valid diagram (plotly_spec or gom visual_spec) for a quantity story (diagram required)");
         }
     }
     parsed = await ensureStemNotInRecentHistory(parsed);

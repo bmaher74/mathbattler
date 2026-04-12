@@ -19,8 +19,8 @@ import { parseAndValidate } from "../js/ai/parseModelJson.js";
 import { SmokePingSchema, PracticeMcqSchema, CombatQuestionSchema } from "../js/ai/schemas/index.js";
 import { finalizePracticeMcq } from "../js/ai/finalizePracticeMcq.js";
 import { finalizeCombatQuestion } from "../js/ai/finalizeCombatQuestion.js";
-import { parsePlotlySpec, combatQuestionRequiresSvgDiagram } from "../js/ai/plotlyQuestionHeuristics.js";
-import { hasRenderableCombatSvg } from "../js/ai/combatVisualSvg.js";
+import { parsePlotlySpec, combatQuestionRequiresDiagram } from "../js/ai/plotlyQuestionHeuristics.js";
+import { hasRenderableCombatVisual } from "../js/ai/combatVisualSvg.js";
 import { combatQuestionJsonSchemaResponseFormat } from "../js/ai/prompts/combatQuestionJsonSchema.js";
 import {
     buildCombatQuestionUserPrompt,
@@ -392,7 +392,7 @@ function combatSchemaRetryUserSuffix(issuesText) {
         String(issuesText || "Unknown validation issues") +
         "\n\nReminder: include every required key in order: _thought_process, topic_category, criterion, " +
         "text OR text_blocks (top-level — do not nest the stem under \"stem\"), expected_answer, success_criteria, " +
-        "ideal_explanation, visual_type, svg_spec, type \"input\". " +
+        "ideal_explanation, visual_type, visual_spec, plotly_spec, type \"input\". " +
         'Use the key name "criterion" (A/B/C/D), not criterion_letter.'
     );
 }
@@ -740,8 +740,8 @@ async function runCombatLab(cfg, args) {
     console.log("=== FINAL QUESTION OBJECT (post-finalize) ===");
     console.log(JSON.stringify(q, null, 2));
 
-    if (args.requirePlot && combatQuestionRequiresSvgDiagram(q) && !hasRenderableCombatSvg(q)) {
-        throw new Error("--require-plot: quantity-story heuristics need a valid svg_spec SVG after finalize");
+    if (args.requirePlot && combatQuestionRequiresDiagram(q) && !hasRenderableCombatVisual(q)) {
+        throw new Error("--require-plot: quantity-story heuristics need a valid gom visual_spec or plotly_spec after finalize");
     }
 
     if (args.printJson) {
@@ -847,7 +847,7 @@ SHARED
   --config PATH
   --marbles            (MCQ) Force a marbles story and chart.
   --require-plot       MCQ: fail if chart JSON in plotly_spec invalid. Combat: fail if quantity-story heuristics
-                       expect a diagram after finalize but svg_spec has no valid SVG.
+                       expect a diagram after finalize but neither gom visual_spec nor plotly_spec is valid.
   --print-json         (MCQ) print full MCQ JSON after validation.
 
 After a successful combat run, optional --smoke still runs a tiny JSON ping if you passed it.

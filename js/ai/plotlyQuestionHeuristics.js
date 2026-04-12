@@ -77,7 +77,7 @@ export function responseNeedsNonEmptyPlotlyChart(q) {
     return physical && (story || analogy);
 }
 
-/** Net inflow/outflow / rate stories (moat, pump, leak, …) — expect an SVG diagram like quantity tales. */
+/** Net inflow/outflow / rate stories (moat, pump, leak, …) — expect a Plotly or GOM diagram like quantity tales. */
 export function rateOrNetChangeStoryNeedsSvg(q) {
     if (!q || typeof q !== "object") return false;
     const blob = `${String(q.text || "")} ${String(q.ideal_explanation || "")}`.toLowerCase();
@@ -91,10 +91,13 @@ export function rateOrNetChangeStoryNeedsSvg(q) {
     return rateCue && unitCue;
 }
 
-/** True when combat JSON should include a non-empty svg_spec (marbles, bags, or rate/net-change tales). */
-export function combatQuestionRequiresSvgDiagram(q) {
+/** True when combat JSON should include a diagram: Plotly (bars/data) or GOM (schematic). */
+export function combatQuestionRequiresDiagram(q) {
     return responseNeedsNonEmptyPlotlyChart(q) || rateOrNetChangeStoryNeedsSvg(q);
 }
+
+/** @deprecated Use combatQuestionRequiresDiagram */
+export const combatQuestionRequiresSvgDiagram = combatQuestionRequiresDiagram;
 
 export function parsePlotlySpec(raw) {
     if (!raw || typeof raw !== "string" || !raw.trim()) return null;

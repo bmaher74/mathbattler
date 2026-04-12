@@ -1,8 +1,43 @@
 import { z } from "zod";
+import { parsePlotlySpec } from "../plotlyQuestionHeuristics.js";
+
+/** @typedef {{ viewBox: string, elements: unknown[] }} GomSpec */
+
+const GomElementSchema = z.discriminatedUnion("type", [
+    z.object({
+        type: z.literal("rect"),
+        x: z.coerce.number(),
+        y: z.coerce.number(),
+        w: z.coerce.number(),
+        h: z.coerce.number()
+    }),
+    z.object({
+        type: z.literal("polygon"),
+        points: z.string().min(1)
+    }),
+    z.object({
+        type: z.literal("line"),
+        x1: z.coerce.number(),
+        y1: z.coerce.number(),
+        x2: z.coerce.number(),
+        y2: z.coerce.number()
+    }),
+    z.object({
+        type: z.literal("label"),
+        text: z.string(),
+        x: z.coerce.number(),
+        y: z.coerce.number()
+    })
+]);
+
+export const GomSpecSchema = z.object({
+    viewBox: z.string().min(1),
+    elements: z.array(GomElementSchema).min(1)
+});
 
 /**
  * Map common Qwen json_schema drift to the shape CombatQuestionSchema expects.
- * Does not invent missing required fields.
+ * Strips legacy svg_spec (raw SVG no longer supported).
  */
 export function normalizeCombatQuestionInput(raw) {
     if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return raw;
@@ -10,21 +45,58 @@ export function normalizeCombatQuestionInput(raw) {
     if (typeof o.expected_answer === "number" && Number.isFinite(o.expected_answer)) {
         o.expected_answer = String(o.expected_answer);
     }
-    // Legacy aliases → svg_spec
-    if ((o.svg_spec == null || String(o.svg_spec).trim() === "") && o.visual_spec != null && String(o.visual_spec).trim()) {
-        o.svg_spec = o.visual_spec;
-    }
-    if (o.svg_spec == null) o.svg_spec = "";
-    delete o.visual_spec;
-    delete o.plotly_spec;
 
-    const specStr = String(o.svg_spec).trim();
-    const looksLikeSvg = specStr.length >= 12 && /<svg[\s>]/i.test(specStr);
-    if (o.visual_type == null || String(o.visual_type).trim() === "") {
-        o.visual_type = looksLikeSvg ? "svg" : "none";
+    if (o.plotly_spec != null && typeof o.plotly_spec === "object") {
+        try {
+            o.plotly_spec = JSON.stringify(o.plotly_spec);
+        } catch {
+            o.plotly_spec = "";
+        }
     }
-    if (o.visual_type === "none" && looksLikeSvg) o.visual_type = "svg";
-    if (String(o.visual_type).toLowerCase() === "none") o.svg_spec = "";
+    if (o.plotly_spec == null) o.plotly_spec = "";
+
+    /** @type {unknown} */
+    let vs = o.visual_spec;
+    if (vs != null && typeof vs === "string") {
+        const t = vs.trim();
+        if (t.startsWith("{")) {
+            try {
+                vs = JSON.parse(t);
+            } catch {
+                vs = null;
+            }
+        } else {
+            vs = null;
+        }
+    }
+    if (vs != null && typeof vs === "object" && !Array.isArray(vs)) {
+        o.visual_spec = vs;
+    } else {
+        o.visual_spec = null;
+    }
+
+    delete o.svg_spec;
+
+    let vt = o.visual_type == null ? "" : String(o.visual_type).trim().toLowerCase();
+    if (vt === "svg") vt = "none";
+    if (vt === "geometry_data") vt = "gom";
+    o.visual_type = vt || undefined;
+
+    if (!o.visual_type || o.visual_type === "") {
+        if (o.visual_spec && typeof o.visual_spec === "object") {
+            const spec = /** @type {Record<string, unknown>} */ (o.visual_spec);
+            if (typeof spec.viewBox === "string" && Array.isArray(spec.elements)) o.visual_type = "gom";
+        }
+        if (!o.visual_type && parsePlotlySpec(o.plotly_spec)) o.visual_type = "plotly";
+        if (!o.visual_type) o.visual_type = "none";
+    }
+
+    if (o.visual_type === "none") {
+        o.plotly_spec = "";
+        o.visual_spec = null;
+    }
+
+    if (o.visual_spec === undefined) o.visual_spec = null;
 
     const critEmpty = o.criterion == null || String(o.criterion).trim() === "";
     if (critEmpty && o.criterion_letter != null) {
@@ -66,9 +138,11 @@ const combatQuestionBase = z
         expected_answer: z.string().min(1),
         success_criteria: z.string().min(1),
         ideal_explanation: z.string().min(1),
-        visual_type: z.enum(["none", "svg"]),
-        /** Raw SVG markup (single-quoted attributes); empty string when visual_type is "none". */
-        svg_spec: z.string().optional().default(""),
+        visual_type: z.enum(["none", "gom", "plotly"]),
+        /** Schematic diagram (GOM). Null when visual_type is not gom. */
+        visual_spec: GomSpecSchema.nullable(),
+        /** Plotly JSON string for charts / bars / data plots. Empty when not plotly. */
+        plotly_spec: z.string().optional().default(""),
         type: z.literal("input")
     })
     .superRefine((data, ctx) => {
@@ -86,11 +160,47 @@ const combatQuestionBase = z
                 message: "Use either text or text_blocks, not both"
             });
         }
-        if (data.visual_type === "svg" && !String(data.svg_spec ?? "").trim()) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: 'visual_type "svg" requires non-empty svg_spec'
-            });
+        if (data.visual_type === "gom") {
+            if (data.visual_spec == null) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'visual_type "gom" requires non-null visual_spec'
+                });
+            }
+            if (String(data.plotly_spec ?? "").trim()) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'visual_type "gom" requires empty plotly_spec'
+                });
+            }
+        }
+        if (data.visual_type === "plotly") {
+            if (!parsePlotlySpec(data.plotly_spec)) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'visual_type "plotly" requires valid plotly_spec JSON with a non-empty data array'
+                });
+            }
+            if (data.visual_spec != null) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'visual_type "plotly" requires visual_spec to be null'
+                });
+            }
+        }
+        if (data.visual_type === "none") {
+            if (data.visual_spec != null) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'visual_type "none" requires visual_spec null'
+                });
+            }
+            if (String(data.plotly_spec ?? "").trim()) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'visual_type "none" requires empty plotly_spec'
+                });
+            }
         }
     })
     .transform((o) => ({

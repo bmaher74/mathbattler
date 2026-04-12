@@ -9,39 +9,67 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
-const { hasRenderableCombatSvg, synthesizeQuantityStorySvgSpec } = await import(
-    join(ROOT, "js/ai/combatVisualSvg.js")
-);
+const {
+    getDarkPlotlyLayoutBase,
+    hasRenderableCombatGom,
+    hasRenderableCombatPlotly,
+    hasRenderableCombatVisual,
+    hasRenderableCombatSvg
+} = await import(join(ROOT, "js/ai/combatVisualSvg.js"));
 
-describe("hasRenderableCombatSvg", () => {
-    const minimalSvg =
-        "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><rect x='1' y='1' width='1' height='1'/></svg>";
+const minimalGom = {
+    viewBox: "0 0 100 100",
+    elements: [{ type: "rect", x: 0, y: 0, w: 1, h: 1 }]
+};
 
-    it("is true for svg visual_type with viewBox", () => {
-        assert.equal(hasRenderableCombatSvg({ visual_type: "svg", svg_spec: minimalSvg }), true);
+const minimalPlotly = JSON.stringify({
+    data: [{ type: "bar", x: ["A"], y: [1] }],
+    layout: {}
+});
+
+describe("hasRenderableCombatGom", () => {
+    it("is true for gom visual_type with valid spec", () => {
+        assert.equal(hasRenderableCombatGom({ visual_type: "gom", visual_spec: minimalGom }), true);
     });
 
-    it("is false when not svg type", () => {
-        assert.equal(hasRenderableCombatSvg({ visual_type: "none", svg_spec: minimalSvg }), false);
-    });
-
-    it("is false when svg_spec lacks viewBox", () => {
-        assert.equal(hasRenderableCombatSvg({ visual_type: "svg", svg_spec: "<svg><circle/></svg>" }), false);
+    it("is false when not gom", () => {
+        assert.equal(hasRenderableCombatGom({ visual_type: "none", visual_spec: minimalGom }), false);
     });
 });
 
-describe("synthesizeQuantityStorySvgSpec", () => {
-    it("returns empty when not enough integers", () => {
-        assert.equal(synthesizeQuantityStorySvgSpec({ text: "One number 5.", ideal_explanation: "" }), "");
+describe("hasRenderableCombatPlotly", () => {
+    it("is true for plotly visual_type with valid JSON", () => {
+        assert.equal(hasRenderableCombatPlotly({ visual_type: "plotly", plotly_spec: minimalPlotly }), true);
     });
 
-    it("returns svg string with viewBox for two-number story", () => {
-        const s = synthesizeQuantityStorySvgSpec({
-            text: "Start with 10 apples. Spend 3. How many left?",
-            ideal_explanation: ""
-        });
-        assert.ok(s.startsWith("<svg "));
-        assert.ok(s.includes("viewBox='0 0 100 100'"));
-        assert.ok(s.includes("<rect"));
+    it("is false when plotly_spec invalid", () => {
+        assert.equal(hasRenderableCombatPlotly({ visual_type: "plotly", plotly_spec: "{}" }), false);
+    });
+});
+
+describe("hasRenderableCombatVisual", () => {
+    it("accepts gom or plotly", () => {
+        assert.equal(hasRenderableCombatVisual({ visual_type: "gom", visual_spec: minimalGom, plotly_spec: "" }), true);
+        assert.equal(
+            hasRenderableCombatVisual({ visual_type: "plotly", visual_spec: null, plotly_spec: minimalPlotly }),
+            true
+        );
+    });
+});
+
+describe("hasRenderableCombatSvg (alias)", () => {
+    it("delegates to combined visual check", () => {
+        assert.equal(hasRenderableCombatSvg({ visual_type: "gom", visual_spec: minimalGom }), true);
+    });
+});
+
+describe("getDarkPlotlyLayoutBase", () => {
+    it("returns transparent dark-theme layout defaults for Plotly.merge", () => {
+        const L = getDarkPlotlyLayoutBase();
+        assert.equal(L.paper_bgcolor, "transparent");
+        assert.match(String(L.plot_bgcolor), /rgba/);
+        assert.equal(L.font.color, "#e5e7eb");
+        assert.equal(L.autosize, true);
+        assert.ok(L.margin && L.xaxis?.gridcolor && L.yaxis?.gridcolor);
     });
 });

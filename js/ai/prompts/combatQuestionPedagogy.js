@@ -417,7 +417,7 @@ Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
 ${critFocus}
 - Set JSON "success_criteria" to a single string: several lines starting with "- " so the judge can check each line against the student response. Do not copy generic bullets from another criterion letter.
 
-Combat (follow HARD REQUIREMENTS at the end for JSON keys and svg_spec SVG rules):
+Combat (follow HARD REQUIREMENTS at the end for JSON keys and diagram rules in system prompt §5):
 - Speaker (enemy): ${JSON.stringify(enemyName)} — taunt in their voice; name self at least once; never use the hero’s name as the monster’s identity.
 - Hero evolution tier (staff upgrades, 0–5): ${cosmeticsTier}. Higher tiers → more wary or respectful opening taunt; lower tiers → cockier or dismissive. Stay consistent with the creative sparks below.
 - Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
@@ -441,7 +441,7 @@ Structure & content:
 - If you use "text" only: Math in \\(...\\) only; currency like $5 once, not $5$; in JSON double backslashes in TeX (\\\\text, \\\\times, \\\\frac).
 - If you use "text_blocks": omit the "text" key entirely (schema rejects both stem modes at once).
 - ideal_explanation: final polished solution only (max 4 sentences); smart 10-year-old voice; formulas only in \\(...\\); no scratchpad or self-corrections.
-- Diagrams: use visual_type "svg" and svg_spec for any diagram. For Geometry, follow the system prompt SVG rules (single-quoted attributes, viewBox='0 0 100 100', primitives, no double quotes inside the SVG string). For quantity / object stories (bags, marbles, …) when a picture helps, use a minimal SVG (e.g. three rects for Start / Change / End) with the same rules.
+- Diagrams: follow system prompt §5 only — "gom" + structured visual_spec for schematics; "plotly" + plotly_spec (JSON string) for charts, bars, and data plots. No raw SVG.
 - If visual_type is "none", do not claim a diagram exists in prose.
 
 Creative: Original scenario; optional sparks (not data): ${contextSeed} · ${dmDeliveryNudge}

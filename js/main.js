@@ -70,10 +70,10 @@ import {
     buildCombatQuestionUserPrompt,
     pickBattlePinnedTopic
 } from "./ai/prompts/combatQuestionPedagogy.js";
-import { parsePlotlySpec, combatQuestionRequiresSvgDiagram } from "./ai/plotlyQuestionHeuristics.js";
+import { combatQuestionRequiresDiagram } from "./ai/plotlyQuestionHeuristics.js";
 import {
-    hasRenderableCombatSvg,
-    mountCombatVisualSvg,
+    hasRenderableCombatVisual,
+    mountCombatVisual,
     clearCombatVisualMount
 } from "./ai/combatVisualSvg.js";
 
@@ -128,19 +128,35 @@ function mapBossPortrait(level) {
         return `<circle cx="50" cy="50" r="22" fill="#0b1024" stroke="#94a3b8" stroke-width="2"/><text x="50" y="56" font-size="16" font-weight="900" fill="#94a3b8" text-anchor="middle">…</text>`;
     }
     const i = (level - 1) % 10;
+    /** Icon-sized silhouettes aligned with `BOSS_ASSETS` / `ASSETS` battle sprites (viewBox 0 0 100 100). */
     const portraits = [
-        `<ellipse cx="50" cy="58" rx="38" ry="28" fill="#064e3b"/><ellipse cx="50" cy="42" rx="32" ry="30" fill="#22c55e"/><circle cx="40" cy="40" r="5" fill="#bef264"/><circle cx="60" cy="40" r="5" fill="#bef264"/><path d="M40 60 Q50 66 60 60" fill="none" stroke="#052e16" stroke-width="3" stroke-linecap="round"/><text x="50" y="74" font-size="16" font-weight="900" fill="#bbf7d0" text-anchor="middle">x+y</text>`,
-        `<rect x="22" y="18" width="56" height="68" rx="6" fill="#431407" stroke="#ea580c" stroke-width="2"/><rect x="28" y="24" width="20" height="28" fill="#f97316"/><rect x="52" y="24" width="20" height="28" fill="#ea580c"/><text x="38" y="42" font-size="10" fill="#fff" text-anchor="middle">1</text><line x1="32" y1="46" x2="44" y2="46" stroke="#fff"/><text x="38" y="54" font-size="10" fill="#fff" text-anchor="middle">4</text><circle cx="40" cy="36" r="2.2" fill="#fde047"/><circle cx="60" cy="36" r="2.2" fill="#fde047"/>`,
-        `<circle cx="50" cy="52" r="18" fill="#881337" stroke="#fecdd3" stroke-width="2"/><text x="50" y="58" font-size="18" font-weight="900" fill="#fff1f2" text-anchor="middle">%</text><path d="M22 58 L10 70" stroke="#be123c" stroke-width="4" stroke-linecap="round"/><path d="M78 58 L90 70" stroke="#be123c" stroke-width="4" stroke-linecap="round"/>`,
-        `<path d="M22 74 C 30 40 50 26 66 30 C 80 34 84 50 74 58 C 62 66 46 56 42 44" fill="none" stroke="#065f46" stroke-width="10" stroke-linecap="round"/><path d="M50 50 Q70 30 80 60 T40 80" fill="none" stroke="#34d399" stroke-width="3"/><polygon points="75,18 80,13 85,18" fill="#34d399"/>`,
-        `<polygon points="18,56 36,34 44,58 24,74" fill="#2e1065" stroke="#ddd6fe" stroke-width="1.5"/><polygon points="82,56 64,34 56,58 76,74" fill="#2e1065" stroke="#ddd6fe" stroke-width="1.5"/><polygon points="34,34 50,24 66,34 60,58 40,58" fill="#4c1d95"/><circle cx="46" cy="42" r="2.6" fill="#111827"/><circle cx="54" cy="42" r="2.6" fill="#111827"/>`,
-        `<polyline points="32,28 24,28 24,78 32,78" fill="none" stroke="#9a3412" stroke-width="4"/><polyline points="68,28 76,28 76,78 68,78" fill="none" stroke="#9a3412" stroke-width="4"/><rect x="34" y="32" width="32" height="44" rx="6" fill="#451a03" stroke="#fdba74" stroke-width="2"/><text x="50" y="58" font-size="16" font-weight="900" fill="#fdba74" text-anchor="middle">[ ]</text>`,
-        `<path d="M18 82 C 18 56 32 34 50 32 C 68 34 82 56 82 82 Q 66 76 50 78 Q 34 76 18 82 Z" fill="#0b1024" stroke="#93c5fd" stroke-width="2"/><path d="M12 88 Q50 20 88 88" fill="none" stroke="#60a5fa" stroke-width="3" opacity="0.6"/><rect x="42" y="40" width="16" height="16" rx="3" fill="#1e3a8a" stroke="#bfdbfe" stroke-width="2"/>`,
-        `<polygon points="30,40 50,30 70,40 50,80" fill="#374151" stroke="#9ca3af" stroke-width="2"/><line x1="16" y1="84" x2="84" y2="16" stroke="#fcd34d" stroke-width="3" stroke-linecap="round"/><text x="50" y="28" font-size="9" font-weight="900" fill="#fde68a" text-anchor="middle">v=d/t</text>`,
-        `<circle cx="50" cy="50" r="24" fill="#0b1024" stroke="#fde68a" stroke-width="2"/><circle cx="50" cy="50" r="5" fill="#fff" opacity="0.95"/><circle cx="50" cy="50" r="18" fill="none" stroke="#facc15" stroke-width="2"/><text x="50" y="80" font-size="10" font-weight="900" fill="#fde68a" text-anchor="middle">x=x</text>`,
-        `<circle cx="50" cy="52" r="26" fill="#020617" stroke="#818cf8" stroke-width="2"/><circle cx="50" cy="52" r="10" fill="#312e81"/><text x="50" y="30" font-size="9" font-weight="900" fill="#c7d2fe" text-anchor="middle">0 1 0 1</text>`
+        // 1 Algebra Slime — droplet base, variable “glasses”, lime eyes
+        `<ellipse cx="50" cy="90" rx="34" ry="9" fill="#052e16" opacity="0.55"/><path d="M12 76 Q8 92 18 96 Q24 100 30 92" fill="#064e3b" opacity="0.9"/><path d="M88 76 Q92 92 82 96 Q76 100 70 92" fill="#064e3b" opacity="0.9"/><path d="M14 78 C6 28 30 3 50 3 C70 3 94 28 86 78 Z" fill="#16a34a" stroke="#4ade80" stroke-width="2"/><ellipse cx="50" cy="14" rx="16" ry="10" fill="#22c55e" opacity="0.38"/><polygon points="34,34 46,34 49,47 40,53 31,47" fill="#052e16"/><polygon points="66,34 54,34 51,47 60,53 69,47" fill="#052e16"/><circle cx="40" cy="41" r="4" fill="#bef264"/><circle cx="60" cy="41" r="4" fill="#bef264"/><path d="M40 60 Q50 68 60 60" fill="none" stroke="#052e16" stroke-width="2.6" stroke-linecap="round"/><text x="22" y="24" font-size="8" font-weight="900" fill="#86efac" opacity="0.75">x+y</text>`,
+        // 2 Fraction Golem — chiseled head, furnace chest, paired tablets (solid fills — no ids; many nodes on one map)
+        `<ellipse cx="50" cy="94" rx="28" ry="5" fill="#0c0a09" opacity="0.45"/><path d="M26 10 L74 10 L78 22 L74 34 L26 34 L22 22 Z" fill="#7c2d12" stroke="#ea580c" stroke-width="2"/><path d="M30 14 H70" stroke="#9a3412" stroke-width="1.2" opacity="0.55"/><rect x="22" y="40" width="56" height="32" rx="5" fill="#431407" stroke="#ea580c" stroke-width="2"/><circle cx="50" cy="54" r="11" fill="#f97316" opacity="0.85"/><rect x="24" y="48" width="18" height="20" rx="2" fill="#b45309" stroke="#fef3c7" stroke-width="1"/><text x="33" y="60" font-size="7" font-weight="900" fill="#fffbeb" text-anchor="middle">1</text><line x1="27" y1="63" x2="39" y2="63" stroke="#fffbeb" stroke-width="1.2"/><text x="33" y="70" font-size="7" font-weight="900" fill="#fffbeb" text-anchor="middle">4</text><text x="50" y="62" font-size="9" fill="#fffbeb" text-anchor="middle" font-weight="900">+</text><rect x="58" y="48" width="18" height="20" rx="2" fill="#9a3412" stroke="#fef3c7" stroke-width="1"/><text x="67" y="60" font-size="7" font-weight="900" fill="#fffbeb" text-anchor="middle">1</text><line x1="61" y1="63" x2="73" y2="63" stroke="#fffbeb" stroke-width="1.2"/><text x="67" y="70" font-size="7" font-weight="900" fill="#fffbeb" text-anchor="middle">4</text><circle cx="38" cy="22" r="2.2" fill="#fde047"/><circle cx="62" cy="22" r="2.2" fill="#fde047"/>`,
+        // 3 Percentile Parasite — tick abdomen, radial legs, % core
+        `<ellipse cx="50" cy="90" rx="20" ry="5" fill="#450a0a" opacity="0.5"/><ellipse cx="50" cy="66" rx="18" ry="12" fill="#4c0519" stroke="#9f1239" stroke-width="1.2"/><path d="M50 54 L12 18" stroke="#be123c" stroke-width="3.2" stroke-linecap="round"/><path d="M50 54 L88 18" stroke="#be123c" stroke-width="3.2" stroke-linecap="round"/><path d="M50 56 L16 74" stroke="#be123c" stroke-width="3.2" stroke-linecap="round"/><path d="M50 56 L84 74" stroke="#be123c" stroke-width="3.2" stroke-linecap="round"/><path d="M50 58 L32 94" stroke="#be123c" stroke-width="3.2" stroke-linecap="round"/><path d="M50 58 L68 94" stroke="#be123c" stroke-width="3.2" stroke-linecap="round"/><circle cx="50" cy="44" r="15" fill="#881337" stroke="#fecdd3" stroke-width="2"/><text x="50" y="50" font-size="13" font-weight="900" fill="#fff1f2" text-anchor="middle">%</text><circle cx="43" cy="40" r="2.4" fill="#0b1024"/><circle cx="57" cy="40" r="2.4" fill="#0b1024"/>`,
+        // 4 Fibonacci Serpent — coil, spiral, triangular eye
+        `<path d="M18 82 C22 48 38 28 52 26 C72 24 88 38 84 54 C80 70 58 76 44 70 C28 64 24 48 38 38 C52 28 72 32 78 48" fill="none" stroke="#065f46" stroke-width="9" stroke-linecap="round" opacity="0.92"/><path d="M50 50 Q70 30 80 60 T40 80 T20 40 T70 10" fill="none" stroke="#34d399" stroke-width="3.2" opacity="0.85"/><path d="M72 18 L88 24 L82 38 L70 34 Z" fill="#065f46" stroke="#10b981" stroke-width="1.2"/><polygon points="75,15 80,10 85,15" fill="#34d399"/><text x="22" y="22" font-family="monospace" font-size="7" font-weight="900" fill="#a7f3d0" opacity="0.8">1,1,2…</text>`,
+        // 5 Geo-Dragon — crystal wings, hex core, horns
+        `<path d="M78 88 Q88 78 92 88" fill="none" stroke="#6b21a8" stroke-width="5" stroke-linecap="round" opacity="0.8"/><polygon points="12,52 34,30 40,58 22,72" fill="#4c1d95" stroke="#c4b5fd" stroke-width="1.4" opacity="0.92"/><polygon points="88,52 66,30 60,58 78,72" fill="#4c1d95" stroke="#c4b5fd" stroke-width="1.4" opacity="0.92"/><path d="M40 18 L50 8 L60 18 L66 30 L50 26 L34 30 Z" fill="#4c1d95" stroke="#e9d5ff" stroke-width="1.2"/><polygon points="34,30 50,22 66,30 60,58 40,58" fill="#2e1065" stroke="#e9d5ff" stroke-width="1.6" opacity="0.95"/><polygon points="50,20 62,30 62,52 50,60 38,52 38,30" fill="#9333ea" stroke="#f3e8ff" stroke-width="1.6"/><circle cx="46" cy="40" r="2.6" fill="#0b1024"/><circle cx="54" cy="40" r="2.6" fill="#0b1024"/><text x="50" y="8" font-family="monospace" font-size="7" font-weight="900" fill="#ddd6fe" text-anchor="middle">x,y</text>`,
+        // 6 Matrix Minotaur — brackets, bull head, hooves
+        `<polyline points="30,22 20,22 20,78 30,78" fill="none" stroke="#9a3412" stroke-width="3.6"/><polyline points="70,22 80,22 80,78 70,78" fill="none" stroke="#9a3412" stroke-width="3.6"/><ellipse cx="50" cy="30" rx="20" ry="14" fill="#422006" stroke="#fdba74" stroke-width="1.8"/><path d="M32 24 Q38 8 50 14 Q62 8 68 24" fill="none" stroke="#fdba74" stroke-width="3"/><path d="M32 24 L28 10 L36 16 Z M68 24 L72 10 L64 16 Z" fill="#57534e"/><rect x="34" y="48" width="32" height="36" rx="6" fill="#451a03" stroke="#fdba74" stroke-width="1.8"/><circle cx="42" cy="30" r="3" fill="#fde047"/><circle cx="58" cy="30" r="3" fill="#fde047"/><text x="50" y="84" font-family="monospace" font-size="9" font-weight="900" fill="#fdba74" text-anchor="middle">[ ]</text>`,
+        // 7 Probability Wraith — hood, bell curve, pip dice
+        `<path d="M18 88 C14 52 28 22 50 20 C72 22 86 52 82 88 Q66 82 50 86 Q34 82 18 88 Z" fill="#0b1024" stroke="#93c5fd" stroke-width="1.8" opacity="0.92"/><path d="M10 90 Q50 14 90 90" fill="none" stroke="#60a5fa" stroke-width="2.8" opacity="0.55"/><rect x="40" y="38" width="20" height="20" rx="3" fill="#1e3a8a" stroke="#bfdbfe" stroke-width="1.8"/><circle cx="45" cy="44" r="1.5" fill="#e0f2fe"/><circle cx="55" cy="52" r="1.5" fill="#e0f2fe"/><circle cx="45" cy="56" r="1.5" fill="#e0f2fe"/><circle cx="55" cy="56" r="1.5" fill="#e0f2fe"/><circle cx="44" cy="50" r="2.6" fill="#0b1024"/><circle cx="56" cy="50" r="2.6" fill="#0b1024"/>`,
+        // 8 Velocity Vanguard — kite shield, velocity spear, helm
+        `<polygon points="30,40 50,30 70,40 50,80" fill="#374151" stroke="#9ca3af" stroke-width="2"/><line x1="10" y1="90" x2="90" y2="10" stroke="#fcd34d" stroke-width="3" stroke-linecap="round"/><path d="M32 28 H68 L66 20 Q50 12 34 20 Z" fill="#4b5563" stroke="#d1d5db" stroke-width="1.4"/><rect x="34" y="34" width="32" height="28" rx="5" fill="#0b1024" opacity="0.88" stroke="#9ca3af" stroke-width="1.6"/><circle cx="44" cy="46" r="2.6" fill="#fcd34d"/><circle cx="56" cy="46" r="2.6" fill="#fcd34d"/><text x="50" y="26" font-family="monospace" font-size="7" font-weight="900" fill="#fde68a" text-anchor="middle">v=d/t</text>`,
+        // 9 Axiom Sentinel — obelisk, golden rings, central eye
+        `<path d="M38 92 L42 32 L50 20 L58 32 L62 92 Z" fill="#1c1917" stroke="#a16207" stroke-width="1.8" opacity="0.94"/><circle cx="50" cy="50" r="34" fill="none" stroke="#eab308" stroke-width="1.6" opacity="0.65"/><circle cx="50" cy="50" r="22" fill="none" stroke="#facc15" stroke-width="1.3" opacity="0.55"/><circle cx="50" cy="50" r="12" fill="#0b1024" stroke="#fde68a" stroke-width="1.8"/><circle cx="50" cy="50" r="4.5" fill="#ffffff"/><text x="50" y="88" font-family="monospace" font-size="8" font-weight="900" fill="#fde68a" text-anchor="middle">x=x</text>`,
+        // 10 Logic Leviathan — sea coils, void orb, logic glyphs
+        `<path d="M6 88 C20 52 36 44 52 48 C72 52 88 68 94 88" fill="none" stroke="#312e81" stroke-width="7" stroke-linecap="round" opacity="0.55"/><path d="M8 72 C24 40 44 28 58 32" fill="none" stroke="#4338ca" stroke-width="4" stroke-linecap="round" opacity="0.45"/><circle cx="50" cy="52" r="38" fill="#1e1b4b" stroke="#818cf8" stroke-width="1.8" opacity="0.98"/><circle cx="50" cy="52" r="26" fill="none" stroke="#6366f1" stroke-width="1.2" opacity="0.55"/><circle cx="50" cy="52" r="10" fill="#312e81"/><circle cx="46" cy="50" r="2.4" fill="#e0e7ff"/><circle cx="54" cy="50" r="2.4" fill="#e0e7ff"/><text x="26" y="28" font-family="monospace" font-size="7" font-weight="900" fill="#c7d2fe">01</text><text x="60" y="30" font-family="monospace" font-size="7" font-weight="900" fill="#c7d2fe">AND</text>`
     ];
     return portraits[i];
+}
+ /** Compact boss icon (same markup as map nodes) wrapped for bestiary list tiles. */
+function bestiaryBossThumbSvg(level) {
+    const lv = typeof level === "number" && level >= 1 ? level : 1;
+    return `<svg viewBox="0 0 100 100" class="w-full h-full" xmlns="http://www.w3.org/2000/svg">${mapBossPortrait(lv)}</svg>`;
 }
  /** Full battle sprite — high-detail (map nodes use compact portraits). */
 function battleBossSvgMarkup(level) {
@@ -703,6 +719,18 @@ function grantParticipationShards(amount, toastMessage) {
     if (toastMessage) showEngagementToast(toastMessage);
     return n;
 }
+/**
+ * Logic Shards for defeating the boss at this map level (1 = first boss).
+ * Exponential in level: clearing deep levels is the primary way to maximize shard income.
+ */
+function victoryShardsForBossLevel(level) {
+    const lv = Math.max(1, Math.floor(Number(level) || 1));
+    const base = 15;
+    /** Per-level multiplier (~17% more shards each floor than the previous). */
+    const perLevelMult = 1.17;
+    const raw = base * Math.pow(perLevelMult, lv - 1);
+    return Math.max(10, Math.floor(raw));
+}
 function processEngagementLoginSession() {
     const today = localDateISO();
     refillWeeklyStreakFreeze(today);
@@ -1199,15 +1227,13 @@ async function initFirebase() {
     const id = bestiaryIdForLevel(level);
     state.bestiary = Array.isArray(state.bestiary) ? state.bestiary : [];
     if (state.bestiary.some((b) => b && b.id === id)) return;
-    const svg = battleBossSvgMarkup(level);
     state.bestiary.unshift({
         id,
         level,
         name: String(meta?.name || `Boss Lv ${level}`),
         topic: String(meta?.topic || ""),
         hue: String(meta?.hue || ""),
-        defeatedAt: Date.now(),
-        svg
+        defeatedAt: Date.now()
     });
     state.bestiary = state.bestiary.slice(0, 200);
 }
@@ -1250,10 +1276,11 @@ window.closeBestiary = () => document.getElementById("bestiary-overlay")?.classL
             const lvl = typeof b.level === "number" ? b.level : "?";
             const hue = String(b.hue || "#94a3b8");
             const topic = String(b.topic || "");
+            const thumbLevel = typeof b.level === "number" && b.level >= 1 ? b.level : 1;
             return `
             <div class="border border-slate-700 rounded-xl bg-slate-900/40 p-3 flex gap-3">
                 <div class="w-20 h-20 shrink-0 rounded-lg border border-slate-700 bg-slate-950/60 flex items-center justify-center overflow-hidden">
-                    <div class="w-20 h-20">${String(b.svg || "").trim() || ""}</div>
+                    <div class="w-20 h-20">${bestiaryBossThumbSvg(thumbLevel)}</div>
                 </div>
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center justify-between gap-2">
@@ -1808,7 +1835,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Show the inverse operation.\n- Write the final value of \\(x\\).\n- Quick check by substituting back.",
         ideal_explanation: "Subtract \\(5\\) from both sides: \\(x = 12 - 5 = 7\\). Check: \\(7+5=12\\).",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1819,7 +1847,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Use correct order of operations.\n- Show the intermediate multiplication.",
         ideal_explanation: "Multiply first: \\(3 \\times 4 = 12\\), then \\(2 + 12 = 14\\).",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1830,7 +1859,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Use a common denominator.\n- Combine numerators.\n- Simplify if needed.",
         ideal_explanation: "Use a common denominator: \\(\\frac{2}{4} + \\frac{1}{4} = \\frac{3}{4}\\).",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1841,7 +1871,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Correct subtraction.\n- Final statement.",
         ideal_explanation: "Subtract: \\(8 - 3 = 5\\).",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1852,7 +1883,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- State the perimeter rule.\n- Show multiplication.\n- Include units if given.",
         ideal_explanation: "Perimeter of a square is \\(4 \\times \\text{side} = 4 \\times 4 = 16\\).",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     },
     {
@@ -1863,7 +1895,8 @@ const FALLBACK_QUESTIONS = [
         success_criteria: "- Correct division.\n- Final statement.",
         ideal_explanation: "\\(9 \\div 3 = 3\\).",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     }
 ];
@@ -2084,13 +2117,14 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         "5) expected_answer\n" +
         "6) success_criteria\n" +
         "7) ideal_explanation — FINAL polished explanation for the student only; max 4 sentences; NO internal monologue.\n" +
-        '8) visual_type — "svg" or "none".\n' +
-        "9) svg_spec — raw SVG when visual_type is svg (see system prompt: single quotes on attributes, viewBox='0 0 100 100'); \"\" when none.\n" +
-        '10) type — must be "input".\n' +
+        '8) visual_type — "none", "gom", or "plotly" (see system prompt §5).\n' +
+        "9) visual_spec — null OR a GOM object { viewBox, elements } when visual_type is gom; null otherwise.\n" +
+        '10) plotly_spec — "" OR a JSON string of a Plotly figure when visual_type is plotly; "" otherwise.\n' +
+        '11) type — must be "input".\n' +
         "- Key names must match the schema exactly: use \"criterion\" (single letter A–D), never criterion_letter or criterionLetter. Do not add difficulty_band, combat_state, or stem — only text or text_blocks for the stem.\n" +
         "- No other keys. criterion must match this user prompt (A/B/C/D). If US dollars and algebra appear together, use text_blocks (omit text).\n" +
         "- expected_answer: short canonical answer (LaTeX OK); same units/ledger as the story. success_criteria: one string, 2–5 lines starting \"- \", for this criterion letter.\n" +
-        "- Diagrams: only in svg_spec (SVG). If no diagram, visual_type \"none\" and svg_spec \"\".\n" +
+        "- Diagrams: see system prompt §5 (gom + visual_spec OR plotly + plotly_spec). If no diagram, visual_type \"none\", visual_spec null, plotly_spec \"\".\n" +
         "- Put scratchpad only in _thought_process — not in ideal_explanation.\n" +
         "- In prose strings, use single quotes for nested speech so JSON stays valid (avoid raw \" inside values).\n" +
         "- Scope: IB MYP Year 7–8 band from the prompt; no calculus/trig/logs/quadratic formula as the main skill.\n" +
@@ -2170,7 +2204,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
                 userContent +
                     "\n\nYour previous output failed validation. Output one corrected JSON object only.\n" +
                     r.err +
-                    "\n\nReminder: include every required key — expected_answer, success_criteria, visual_type, svg_spec, and the field must be named \"criterion\" (A/B/C/D), not criterion_letter."
+                    "\n\nReminder: include every required key — expected_answer, success_criteria, visual_type, visual_spec, plotly_spec, and the field must be named \"criterion\" (A/B/C/D), not criterion_letter."
             );
             r = parseFinalizeCombat(content);
         }
@@ -2232,25 +2266,22 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
      let parsed = await callModel(basePrompt + dashScopeQuestionUserSuffix());
     parsed = await ensureStemNotInRecentHistory(parsed);
     parsed = await ensureStemNotNumericCloneOfActive(parsed);
-    // Quantity tales, marbles, and rate/inflow stories require SVG in svg_spec.
-    if (combatQuestionRequiresSvgDiagram(parsed)) {
+    // Quantity tales, marbles, and rate/inflow stories require a chart (Plotly) or schematic (GOM).
+    if (combatQuestionRequiresDiagram(parsed)) {
         const chartRetries = 3;
-        for (let i = 0; i < chartRetries && !hasRenderableCombatSvg(parsed); i++) {
+        for (let i = 0; i < chartRetries && !hasRenderableCombatVisual(parsed); i++) {
             parsed = await callModel(
                 basePrompt +
                     dashScopeQuestionUserSuffix() +
                     "\n\nYour previous JSON was rejected: this stem needs a diagram (quantity story, marble/bag tale, OR inflow/outflow/rate problem).\n" +
-                    'Set visual_type to "svg" and svg_spec to a raw SVG string.\n' +
-                    "CRITICAL: Inside svg_spec use SINGLE QUOTES for all SVG attributes only (never double quotes inside the SVG string — that breaks JSON).\n" +
-                    "Use the standard wrapper: <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'>...</svg>\n" +
-                    "For Start/Change/End or net-rate stories, draw labeled shapes (e.g. three <rect> bars, or a simple tank diagram) that match your numbers.\n" +
-                    "Do not embed chart data as nested JSON strings — use SVG in svg_spec only."
+                    'Prefer visual_type "plotly" with plotly_spec as a JSON **string** (escaped) containing a Plotly bar chart (e.g. Start/Change/End) with numeric y and category labels — OR use "gom" + visual_spec for a simple schematic per system prompt §5.\n' +
+                    "plotly_spec must be a string value in the outer JSON, not a raw nested object."
             );
             parsed = await ensureStemNotInRecentHistory(parsed);
             parsed = await ensureStemNotNumericCloneOfActive(parsed);
         }
-        if (!hasRenderableCombatSvg(parsed)) {
-            throw new Error("DashScope returned no valid SVG in svg_spec for a story that requires a diagram");
+        if (!hasRenderableCombatVisual(parsed)) {
+            throw new Error("DashScope returned no valid diagram (plotly_spec or gom visual_spec) for a story that requires one");
         }
     }
     parsed = await ensureStemNotInRecentHistory(parsed);
@@ -2441,7 +2472,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     const qEl = document.getElementById('question-text');
     qEl.innerHTML = proseWithMathToHtml(q.text);
     MathJax.typesetPromise([qEl]);
-    mountCombatVisualSvg(document.getElementById("question-visual-container"), q);
+    mountCombatVisual(document.getElementById("question-visual-container"), q);
      const grid = document.getElementById('mcq-grid');
     if (grid) grid.classList.add("hidden");
     const form = document.getElementById("answer-form");
@@ -2613,36 +2644,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     }
      const plotContainer = document.getElementById("plot-container");
     if (plotContainer) {
-        if (typeof Plotly !== "undefined") Plotly.purge(plotContainer);
         clearCombatVisualMount(plotContainer);
-        mountCombatVisualSvg(plotContainer, q);
-        if (plotContainer.classList.contains("hidden")) {
-            const parsed = typeof Plotly !== "undefined" ? parsePlotlySpec(q.plotly_spec) : null;
-            if (parsed && typeof Plotly !== "undefined") {
-                plotContainer.classList.remove("hidden");
-                const baseLayout = {
-                    autosize: true,
-                    margin: { t: 28, b: 40, l: 44, r: 20 },
-                    paper_bgcolor: "transparent",
-                    plot_bgcolor: "rgba(15,23,42,0.6)",
-                    font: { color: "#e5e7eb", size: 11 },
-                    xaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true },
-                    yaxis: { gridcolor: "#4b5563", zerolinecolor: "#6b7280", automargin: true }
-                };
-                const layout = { ...baseLayout, ...parsed.layout, autosize: true };
-                delete layout.height;
-                delete layout.width;
-                Plotly.newPlot(plotContainer, parsed.data, layout, {
-                    displayModeBar: false,
-                    responsive: true
-                });
-                requestAnimationFrame(() => {
-                    try {
-                        Plotly.Plots.resize(plotContainer);
-                    } catch (_) {}
-                });
-            }
-        }
+        mountCombatVisual(plotContainer, q);
     }
      document.getElementById("detailed-feedback-overlay").classList.remove("hidden");
 }
@@ -2674,12 +2677,14 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         '- type must be the string "mcq".\n' +
         "- options: exactly 4 non-empty strings, plausible distractors.\n" +
         "- answer: must exactly match one element of options.\n" +
-        '- plotly_spec: string only — "" OR one JSON-encoded chart specification (scatter/bar traces) with escaped inner quotes.\n' +
+        '- visual_type: "none", "gom", or "plotly" — same rules as combat §5: use "gom" + visual_spec for static geometric schematics (shapes, labels on a grid); use "plotly" + plotly_spec (JSON string) for charts, bars, scatter, data plots.\n' +
+        '- visual_spec: null OR a GOM object { "viewBox", "elements" } when visual_type is gom; null otherwise.\n' +
+        '- plotly_spec: "" OR a JSON-encoded Plotly figure string when visual_type is plotly; "" otherwise.\n' +
         "- ideal_explanation: 3–6 short sentences, clear steps.\n" +
         '- "text" and ideal_explanation: plain English only — no pipe tables, # headings, **, backticks, or ```; math as \\(...\\) only (no $$; no single-dollar math wraps). Lists: lines starting with "- ".\n' +
         "\n" +
         LLM_NO_MARKDOWN_IN_STRINGS +
-        "\n\nReturn one JSON object with exactly these keys: topic_category, text, answer, ideal_explanation, plotly_spec, type, options. No markdown, no code fences."
+        "\n\nReturn one JSON object with exactly these keys: topic_category, text, answer, ideal_explanation, visual_type, visual_spec, plotly_spec, type, options. No markdown, no code fences."
     );
 }
  async function fetchPracticeMcqViaDashScope({ previousStem = "" } = {}) {
@@ -2691,6 +2696,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         role: "system",
         content:
             "You output exactly one valid JSON object and nothing else. No markdown, no code fences, no commentary. Use double quotes for JSON strings. " +
+            "For diagrams: visual_type gom + visual_spec for geometric schematics; visual_type plotly + plotly_spec (JSON string) for charts/bars/data; otherwise visual_type none with visual_spec null and plotly_spec empty. " +
             LLM_NO_MARKDOWN_IN_STRINGS
     };
     const diff = state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8");
@@ -2734,7 +2740,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         content = await postPractice(
             "\n\nCRITICAL: Your previous output failed schema validation.\n" +
                 pv.issuesText +
-                "\n\nOutput ONLY one JSON object with keys topic_category, text, answer, ideal_explanation, plotly_spec, type, options. type must be \"mcq\". Escape newlines in strings as \\n."
+                "\n\nOutput ONLY one JSON object with keys topic_category, text, answer, ideal_explanation, visual_type, visual_spec, plotly_spec, type, options. type must be \"mcq\". Escape newlines in strings as \\n."
         );
         pv = parseAndValidate(PracticeMcqSchema, content, { lenient: true });
     }
@@ -2946,10 +2952,12 @@ window.nextPracticeQuestion = async () => {
     const prevStem = practiceActiveQuestion?.text ? String(practiceActiveQuestion.text) : "";
     const qEl = document.getElementById("practice-question-text");
     const grid = document.getElementById("practice-mcq-grid");
+    const visEl = document.getElementById("practice-visual-container");
     const fb = document.getElementById("practice-feedback");
     const nextBtn = document.getElementById("practice-next-btn");
     if (fb) fb.innerText = "";
     if (grid) grid.innerHTML = "";
+    if (visEl) clearCombatVisualMount(visEl);
     if (qEl) {
         if (window.MathJax?.typesetClear) MathJax.typesetClear([qEl]);
         qEl.innerText = "Summoning a practice question...";
@@ -2967,6 +2975,10 @@ window.nextPracticeQuestion = async () => {
         }
         if (qEl) qEl.innerHTML = proseWithMathToHtml(q.text);
         if (window.MathJax) MathJax.typesetPromise([qEl]);
+        if (visEl) {
+            clearCombatVisualMount(visEl);
+            mountCombatVisual(visEl, q);
+        }
         if (grid) {
             q.options.forEach((opt) => {
                 const b = document.createElement("button");
@@ -3122,7 +3134,7 @@ window.nextPracticeQuestion = async () => {
     }
 };
  function finishBattle(win) {
-    const victoryGain = 15 + Math.min(40, Math.floor(state.currentLevel / 2));
+    const victoryGain = victoryShardsForBossLevel(state.currentLevel);
     const extraLines = [];
     let participationExtra = 0;
     if (!win) {

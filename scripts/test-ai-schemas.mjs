@@ -62,7 +62,8 @@ describe("CombatQuestionSchema", () => {
         success_criteria: "Must state 4.",
         ideal_explanation: "Add the numbers.",
         visual_type: "none",
-        svg_spec: "",
+        visual_spec: null,
+        plotly_spec: "",
         type: "input"
     };
 
@@ -95,21 +96,25 @@ describe("CombatQuestionSchema", () => {
         assert.equal(r.data.criterion, "D");
     });
 
-    it("maps legacy visual_spec to svg_spec in preprocess", () => {
+    it("accepts gom visual_spec", () => {
         const raw = {
             criterion: "a",
             text: "Hi",
             expected_answer: "1",
             success_criteria: "- ok",
             ideal_explanation: "ok",
-            visual_type: "svg",
-            visual_spec: "<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='10' fill='none'/></svg>",
+            visual_type: "gom",
+            visual_spec: {
+                viewBox: "0 0 100 100",
+                elements: [{ type: "rect", x: 0, y: 0, w: 10, h: 10 }]
+            },
+            plotly_spec: "",
             type: "input"
         };
         const r = CombatQuestionSchema.safeParse(raw);
         assert.equal(r.success, true);
-        assert.equal(r.data.svg_spec.includes("circle"), true);
-        assert.equal(r.data.visual_spec, undefined);
+        assert.equal(r.data.visual_type, "gom");
+        assert.equal(r.data.visual_spec.elements.length, 1);
     });
 
     it("maps criterion_letter to criterion (model alias drift)", () => {
@@ -122,7 +127,8 @@ describe("CombatQuestionSchema", () => {
             success_criteria: "- ok",
             ideal_explanation: "Add.",
             visual_type: "none",
-            svg_spec: "",
+            visual_spec: null,
+            plotly_spec: "",
             type: "input"
         });
         assert.equal(r.success, true);
@@ -139,6 +145,9 @@ describe("CombatQuestionSchema", () => {
             expected_answer: "1",
             success_criteria: "- ok",
             ideal_explanation: "Subtract.",
+            visual_type: "none",
+            visual_spec: null,
+            plotly_spec: "",
             type: "input"
         });
         assert.equal(r.success, true);
@@ -157,6 +166,9 @@ describe("CombatQuestionSchema", () => {
             expected_answer: "1",
             success_criteria: "- ok",
             ideal_explanation: "ok",
+            visual_type: "none",
+            visual_spec: null,
+            plotly_spec: "",
             type: "input"
         });
         assert.equal(r.success, false);
@@ -169,6 +181,8 @@ describe("PracticeMcqSchema", () => {
         text: "What is $2+2$?",
         answer: "4",
         ideal_explanation: "Add.",
+        visual_type: "none",
+        visual_spec: null,
         plotly_spec: "",
         type: "mcq",
         options: ["3", "4", "5", "6"]
@@ -187,6 +201,8 @@ describe("PracticeMcqSchema", () => {
     it("stringifies object plotly_spec", () => {
         const r = PracticeMcqSchema.safeParse({
             ...good,
+            visual_type: "plotly",
+            visual_spec: null,
             plotly_spec: { data: [{ x: [1], y: [2], type: "scatter" }] }
         });
         assert.equal(r.success, true);

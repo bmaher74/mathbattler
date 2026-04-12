@@ -14,6 +14,7 @@ const {
     synthesizeQuantityStoryPlotlySpec,
     responseNeedsNonEmptyPlotlyChart,
     rateOrNetChangeStoryNeedsSvg,
+    combatQuestionRequiresDiagram,
     combatQuestionRequiresSvgDiagram,
     parsePlotlySpec
 } = await import(join(ROOT, "js/ai/plotlyQuestionHeuristics.js"));
@@ -93,10 +94,15 @@ describe("rateOrNetChangeStoryNeedsSvg", () => {
     });
 });
 
-describe("combatQuestionRequiresSvgDiagram", () => {
+describe("combatQuestionRequiresDiagram", () => {
     it("is true when plotly heuristic or rate story applies", () => {
         const q = { text: "Tank has 100 liters. Pump removes 5 per minute.", ideal_explanation: "" };
-        assert.equal(combatQuestionRequiresSvgDiagram(q), true);
+        assert.equal(combatQuestionRequiresDiagram(q), true);
+    });
+
+    it("matches deprecated combatQuestionRequiresSvgDiagram alias", () => {
+        const q = { text: "10 marbles in a bag. Gave 3 away.", ideal_explanation: "" };
+        assert.equal(combatQuestionRequiresSvgDiagram(q), combatQuestionRequiresDiagram(q));
     });
 });
 

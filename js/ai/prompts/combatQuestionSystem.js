@@ -17,7 +17,7 @@ Output exactly ONE valid JSON object. No markdown code fences, no commentary. Do
   4) DRAFT: Only then write the player-facing stem so the text matches the mapping exactly.
 - "ideal_explanation": The FINAL, polished explanation for the student. Maximum 4 sentences. NO internal monologue.
 - "criterion": Must be exactly this key name (values A, B, C, or D).
-- "visual_type" and "svg_spec": See ### 5 below.
+- "visual_type", "visual_spec", and "plotly_spec": See ### 5 below.
 
 ### 2. STEM FORMATTING (Choose ONE)
 Provide either "text" OR "text_blocks" (Never both).
@@ -39,18 +39,24 @@ Use vivid, dramatic verbs such as (shatter, obliterate, twist, doom, curse, fray
 3. Brag about the ancient/cosmic power of mathematics.
 Avoid boring stems that just state a bare equation.
 
-### 5. SVG GEOMETRY DIAGRAMS (CRITICAL — JSON-SAFE)
-If the topic is Geometry (or another strand where a simple figure helps), you **should** include a diagram (SVG in svg_spec only).
-- Set "visual_type" to "svg" and "svg_spec" to the raw SVG markup when you include a diagram. If no diagram, set "visual_type" to "none" and "svg_spec" to "".
-When writing SVG inside "svg_spec", you MUST obey these constraints so the JSON string does not break:
-1) SINGLE QUOTES ONLY for ALL SVG attributes. Example: <rect width='10' height='20' fill='none'/>. NEVER use double quotes inside the SVG string (they collide with JSON string delimiters and cause unterminated JSON).
-2) STANDARD CANVAS: Wrap the drawing in exactly: <svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'> ... </svg>
-3) PRIMITIVES: Prefer <rect>, <circle>, <polygon>, <line>, <text>. Avoid long <path> unless necessary.
-4) CENTERING: Map coordinates into the 0–100 viewBox so the figure is visible and centered.
-5) NO <style> BLOCKS: Use inline attributes only (e.g. stroke='black' stroke-width='1' fill='none').
-Design a diagram that is heavily labeled with numbers indicating quantities. All elements should contrast with the dark background.
-If "visual_type" is "none", do not claim a diagram exists in prose. If "visual_type" is "svg", the story should match what the SVG shows.
-- Quantity stories (bags, marbles, gave away, how many left, …): when a picture helps, use the same SVG rules — e.g. three labeled bars for Start, Change, and End on the 100×100 canvas.
+### 5. DIAGRAMS — GOM vs Plotly (NO raw SVG)
+The app renders diagrams in two ways. Pick exactly one when a visual helps; otherwise set "visual_type" to "none", "visual_spec" to null, and "plotly_spec" to "".
+
+**A) Schematic figures (Geometry Object Model — "gom")** — static shapes, lengths, angles, labels on a logical grid (not a data chart).
+- Set "visual_type" to "gom" and fill "visual_spec" with a JSON object: { "viewBox": "minX minY width height", "elements": [ ... ] }.
+- Allowed element objects (each has "type"):
+  - { "type": "rect", "x", "y", "w", "h" } (numbers)
+  - { "type": "polygon", "points": "x1,y1 x2,y2 ..." }
+  - { "type": "line", "x1", "y1", "x2", "y2" }
+  - { "type": "label", "text", "x", "y" }
+- **Coordinates:** (0,0) is the **top-left** of the grid; **+x** is right; **+y** is **down** (SVG coordinates, not school Cartesian with y up). Scale so the figure fits the viewBox; place dimension labels just outside shapes.
+- Set "plotly_spec" to "" for gom. The client draws with light strokes on a dark background — you only supply geometry, not colors.
+
+**B) Charts and data (Plotly — "plotly")** — bar charts, scatter, line plots, histograms, or any visual where **numeric traces and axes** are the right model (including Start/Change/End as bars, comparing categories, plotting table data).
+- Set "visual_type" to "plotly" and "plotly_spec" to a **single JSON string** (escape inner double quotes) containing a valid Plotly figure: at least one trace in "data" with numeric coordinates (e.g. bar or scatter). Do not put a raw object at "plotly_spec" — it must stringify into the outer JSON.
+- Set "visual_spec" to null for plotly.
+
+**Consistency:** If "visual_type" is "none", do not claim a diagram, graph, or picture exists in "text" or "ideal_explanation". If you set "gom" or "plotly", the story must match what the visual shows.
 
 ### 6. MATHEMATICAL CONSISTENCY
 - Student answer box is plain text only (no LaTeX rendering, no true subscripts/superscripts). In the STEM you may show correct notation with \\(...\\) (e.g. \\(a_1\\), \\(a_2\\), \\(T_n\\)). Do not imply the student must type LaTeX delimiters or Unicode subscripts in their answer. When sequences or indexed terms matter, name terms consistently in the stem and, if helpful, add a short hint such as: "You may write terms in plain text (e.g. a_1 or a sub 1)." success_criteria and the judge must treat plain-text equivalents as valid (see rubric: underscore forms, "sub", "subscript").

@@ -1,10 +1,11 @@
 export {
     CombatQuestionSchema,
     CombatTextBlockSchema,
-    normalizeCombatQuestionInput
+    normalizeCombatQuestionInput,
+    GomSpecSchema
 } from "./combatQuestion.js";
 export { JudgeResultSchema } from "./judgeResult.js";
-export { PracticeMcqSchema } from "./practiceMcq.js";
+export { PracticeMcqSchema, normalizePracticeMcqInput } from "./practiceMcq.js";
 export { BossMetaSchema } from "./bossMeta.js";
 export { ScanHintSchema } from "./scanHint.js";
 export { ParryResultSchema } from "./parryResult.js";
