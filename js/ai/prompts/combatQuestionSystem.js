@@ -33,14 +33,14 @@ Provide either "text" OR "text_blocks" (Never both).
 - Do not repeat the exact same equation in prose and then again in inline_math. Prose sets the scene; inline_math holds the formula.
 
 ### 4. NARRATIVE & TONE (FORCED MENU)
-Use vivid, dramatic verbs (shatter, obliterate, twist, doom, curse, fray). The enemy taunt MUST commit to ONE of these themes:
+Use vivid, dramatic verbs such as (shatter, obliterate, twist, doom, curse, fray). The enemy taunt *must* commit to **variations** of *one* of these themes:
 1. Insult the student's mortal brain or wits.
 2. Threaten to turn their homework or scratchwork to ash/ruin.
 3. Brag about the ancient/cosmic power of mathematics.
 Avoid boring stems that just state a bare equation.
 
 ### 5. SVG GEOMETRY DIAGRAMS (CRITICAL — JSON-SAFE)
-If the topic is Geometry (or another strand where a simple figure helps), you MAY include a diagram (SVG in svg_spec only).
+If the topic is Geometry (or another strand where a simple figure helps), you **should** include a diagram (SVG in svg_spec only).
 - Set "visual_type" to "svg" and "svg_spec" to the raw SVG markup when you include a diagram. If no diagram, set "visual_type" to "none" and "svg_spec" to "".
 When writing SVG inside "svg_spec", you MUST obey these constraints so the JSON string does not break:
 1) SINGLE QUOTES ONLY for ALL SVG attributes. Example: <rect width='10' height='20' fill='none'/>. NEVER use double quotes inside the SVG string (they collide with JSON string delimiters and cause unterminated JSON).
@@ -48,6 +48,7 @@ When writing SVG inside "svg_spec", you MUST obey these constraints so the JSON 
 3) PRIMITIVES: Prefer <rect>, <circle>, <polygon>, <line>, <text>. Avoid long <path> unless necessary.
 4) CENTERING: Map coordinates into the 0–100 viewBox so the figure is visible and centered.
 5) NO <style> BLOCKS: Use inline attributes only (e.g. stroke='black' stroke-width='1' fill='none').
+Design a diagram that is heavily labeled with numbers indicating quantities. All elements should contrast with the dark background.
 If "visual_type" is "none", do not claim a diagram exists in prose. If "visual_type" is "svg", the story should match what the SVG shows.
 - Quantity stories (bags, marbles, gave away, how many left, …): when a picture helps, use the same SVG rules — e.g. three labeled bars for Start, Change, and End on the 100×100 canvas.
 
@@ -61,7 +62,21 @@ If "visual_type" is "none", do not claim a diagram exists in prose. If "visual_t
 - Numeral collision: Do not reuse the same integer for two different story roles when that mirrors the final answer (e.g. "the toll is 7 coins" and "x coins per chest" with x = 7) — students read that as one number doing two jobs. Use different magnitudes or label roles explicitly ("7-coin toll" vs "per chest").
 - Prose completeness: End each prose block with a full question or instruction; do not trail off with "Find x where" with nothing after it — either ask in plain words ("How many coins are in each chest?") or write "Solve:" and then put the equation in inline_math.
 
-Priority: (1) Valid JSON/Required Keys, (2) Match user topic + strand shape + ledger/variables, (3) Engaging Voice. Never break 1 or 2 for 3. The user message names topic_category and a "Strand shape" line — obey both; do not substitute Algebra when another strand is requested. Follow the HARD REQUIREMENTS in the user message.
+### 7. THE MYP EXAMINER RUBRIC (CRITICAL TASK SHAPING)
+You must morph the mathematical task to perfectly match the requested MYP Criterion.
+- If CRITERION A (Knowing & Understanding): Focus on pure mathematical procedures. Ask the student to solve, calculate, simplify, or apply rules in a straightforward (though delightfully themed) way.
+- If CRITERION B (Investigating Patterns): The task MUST involve extending a pattern, finding a general rule, predicting an nth term, or testing a mathematical relationship. Do NOT just ask for a single calculation.
+- If CRITERION C (Communicating): Focus on mathematical language and representation. The student must be asked to "Show that...", "Justify your reasoning", or translate between words, tables, and equations. The ideal explanation MUST evaluate their use of notation.
+- If CRITERION D (Applying in Real-Life Contexts): The task MUST be grounded in a believable, authentic scenario (even within the fantasy setting). The student must make a choice, evaluate a budget, justify if a model makes sense, or apply math to solve a real-world dilemma.
+
+### 8. MYP COMMAND TERMS
+You must use official IB MYP command terms in the final prose question:
+- Use "Calculate", "Solve", or "Determine" for A.
+- Use "Predict", "Formulate a rule", or "Verify" for B.
+- Use "Show your reasoning" or "Represent" for C.
+- Use "Justify", "Evaluate", or "Model" for D.
+
+Priority: (1) Valid JSON/Required Keys, (2) Match user topic + strand shape + MYP criterion (Sections 7–8) + ledger/variables, (3) Engaging Voice. Never break 1 or 2 for 3. The user message names topic_category and a "Strand shape" line — obey both; do not substitute Algebra when another strand is requested. Follow the HARD REQUIREMENTS in the user message.
 
 String contract (human-readable JSON fields):
 ${LLM_NO_MARKDOWN_IN_STRINGS}`;

@@ -45,11 +45,14 @@ import {
     pickSeededIndex
 } from "./ai/prompts/mathBattleSeeds.js";
 import {
+    CANONICAL_SKILL_TOPICS,
+    RETENTION_FRACTION,
     normalizeSkillProfile,
     mergeSkillProfiles,
     ensureCanonicalSkillTopicsInPlace,
     canonicalizeReportedTopic,
-    buildCombatQuestionUserPrompt
+    buildCombatQuestionUserPrompt,
+    describeRetentionTopicChoice
 } from "./ai/prompts/combatQuestionPedagogy.js";
 import { parsePlotlySpec, combatQuestionRequiresSvgDiagram } from "./ai/plotlyQuestionHeuristics.js";
 import {
@@ -280,6 +283,24 @@ function requestUserSync() {
 }
  function profileStorageKey(name) {
     return "mathbattler_profile_" + encodeURIComponent(name || "default");
+}
+ /** Canonical strands only — stable shape for [topicRotation] console logs. */
+function skillProfileCanonicalSnapshotForLog(sp) {
+    const o = {};
+    if (!sp || typeof sp !== "object") return o;
+    for (const t of CANONICAL_SKILL_TOPICS) {
+        const v = sp[t];
+        if (v && typeof v === "object") {
+            o[t] = {
+                attempts: typeof v.attempts === "number" ? v.attempts : 0,
+                corrects: typeof v.corrects === "number" ? v.corrects : 0
+            };
+        }
+    }
+    return o;
+}
+ function logTopicRotation(tag, detail) {
+    console.log("[topicRotation]", tag, detail);
 }
  /** Firestore document id cannot contain `/` (path separator). */
 function safeProfileDocId(displayName) {
@@ -861,6 +882,12 @@ async function reconcileProfileWithCloud() {
     processEngagementLoginSession();
     ensureBestiaryMatchesUnlockedLevels();
     syncShardsUi();
+    logTopicRotation("profile loaded (cloud reconcile)", {
+        player: name,
+        strandRotationSeq: state.strandRotationSeq,
+        skillProfile: skillProfileCanonicalSnapshotForLog(state.skillProfile),
+        sourcesMerged: "cloud + localStorage + in-memory session"
+    });
     saveLocalProfile(name);
     await persistMergedProfileToCloud(name, {
         ...merged,
@@ -1062,6 +1089,12 @@ async function initFirebase() {
     processEngagementLoginSession();
     ensureBestiaryMatchesUnlockedLevels();
     syncShardsUi();
+    logTopicRotation("profile loaded (login)", {
+        player: name,
+        strandRotationSeq: state.strandRotationSeq,
+        skillProfile: skillProfileCanonicalSnapshotForLog(state.skillProfile),
+        sourcesMerged: "cloud (if any) + localStorage"
+    });
     saveLocalProfile(name);
      if (isFirebaseReady && db) {
         await persistMergedProfileToCloud(name, {
@@ -1781,6 +1814,13 @@ const FALLBACK_QUESTIONS = [
         typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
             ? Math.floor(state.strandRotationSeq)
             : 0;
+    const profileBefore = {
+        strandRotationSeq: strandSeq,
+        skillProfile: skillProfileCanonicalSnapshotForLog(state.skillProfile),
+        turnIndex: state.turnIndex,
+        mapLevel,
+        forceEasierNextQuestion: state.forceEasierNextQuestion === true
+    };
     const bundle = buildCombatQuestionUserPrompt({
         mapLevel,
         forceEasierNextQuestion: state.forceEasierNextQuestion === true,
@@ -1792,7 +1832,37 @@ const FALLBACK_QUESTIONS = [
         activeQuestionText: state.activeQuestion?.text ?? null,
         rng: Math.random
     });
+    const m = bundle.meta || {};
+    const nextSeq = bundle.nextStrandRotationSeq;
+    const nextIdx = Number.isFinite(nextSeq) ? Math.floor(nextSeq) : 0;
+    const nextRotationStrand = CANONICAL_SKILL_TOPICS[nextIdx % CANONICAL_SKILL_TOPICS.length];
+    const retentionExplain = describeRetentionTopicChoice(state.skillProfile, m.retentionTopic);
+    console.groupCollapsed("[topicRotation] combat prompt");
+    console.log("1. From student profile (inputs to this prompt build)", profileBefore);
+    console.log("2. Topic decision steps", {
+        strandSeq: m.strandSeq,
+        rotationTopic: m.rotationTopic,
+        retentionCandidate: m.retentionTopic,
+        retentionPickExplain: retentionExplain,
+        rngRollsInsidePickRetention: m.retentionPickRolls,
+        retentionGateRoll: m.retentionGateRoll,
+        retentionGateThreshold: `< ${RETENTION_FRACTION} (${Math.round(RETENTION_FRACTION * 100)}%)`,
+        usedRetentionPath: m.usedRetention,
+        chosenTopic: bundle.chosenTopic,
+        targetCriterion: bundle.targetCriterion,
+        nextStrandRotationSeqAfterThisBuild: nextSeq
+    });
     state.strandRotationSeq = bundle.nextStrandRotationSeq;
+    const savedProfileSlice = {
+        strandRotationSeq: state.strandRotationSeq,
+        skillProfile: skillProfileCanonicalSnapshotForLog(state.skillProfile)
+    };
+    console.log("3. Saved to student profile (localStorage now; cloud on heartbeat / sync)", savedProfileSlice);
+    console.log("4. Next combat prompt rotation strand (CANONICAL_SKILL_TOPICS[nextSeq % 7])", {
+        nextStrandRotationSeq: state.strandRotationSeq,
+        nextRotationStrand
+    });
+    console.groupEnd();
     if (state.playerName) saveLocalProfile(state.playerName);
     return { prompt: bundle.prompt, chosenTopic: bundle.chosenTopic, targetCriterion: bundle.targetCriterion };
 }

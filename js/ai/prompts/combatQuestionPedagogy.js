@@ -1,5 +1,7 @@
 /**
  * Combat question topic rotation, skill snapshots, and user-message body (shared: browser + validate-llm).
+ *
+ * Full design write-up: docs/TOPIC_ROTATION.md (strand vs MYP criterion, strandRotationSeq, retention ~22%).
  */
 
 import { PROMPT_VERSION } from "./contract.js";
@@ -42,6 +44,14 @@ export const CANONICAL_SKILL_TOPICS = [
     "Data & Probability",
     "Real-Life Modeling"
 ];
+
+/** Full IB MYP criterion titles (must match system prompt Section 7). */
+export const MYP_CRITERION_TITLES = {
+    A: "Knowing & Understanding",
+    B: "Investigating Patterns",
+    C: "Communicating",
+    D: "Applying in Real-Life Contexts"
+};
 
 /** Until each strand has this many attempts, prefer it for "retention" picks (exploration). */
 export const SKILL_TOPIC_MIN_SAMPLES = 3;
@@ -136,6 +146,38 @@ export function pickRetentionTopic(skillProfile, rng = Math.random) {
     return best;
 }
 
+/**
+ * Human-readable explanation of why `pickRetentionTopic` would return `pickedTopic` for this profile (for debugging).
+ * Does not replay RNG; describes the deterministic branch that matches the usual algorithm.
+ */
+export function describeRetentionTopicChoice(skillProfile, pickedTopic) {
+    const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
+    ensureCanonicalSkillTopicsInPlace(sp);
+    const under = CANONICAL_SKILL_TOPICS.filter((t) => (sp[t]?.attempts || 0) < SKILL_TOPIC_MIN_SAMPLES);
+    if (under.length) {
+        return under.includes(pickedTopic)
+            ? `exploration: uniform pick among under-sampled strands (attempts < ${SKILL_TOPIC_MIN_SAMPLES}): [${under.join(", ")}]`
+            : `exploration pool was [${under.join(", ")}]; retention candidate "${pickedTopic}" came from RNG in that pool`;
+    }
+    let best = CANONICAL_SKILL_TOPICS[0];
+    let bestRatio = 2;
+    for (const t of CANONICAL_SKILL_TOPICS) {
+        const d = sp[t];
+        if (!d || d.attempts < 1) continue;
+        const r = d.corrects / d.attempts;
+        if (r < bestRatio - 1e-9) {
+            bestRatio = r;
+            best = t;
+        }
+    }
+    if (bestRatio >= 2 - 1e-9) {
+        return `fallback: no strand had attempts ≥ 1 — random canonical strand (candidate "${pickedTopic}")`;
+    }
+    return pickedTopic === best
+        ? `weakest success ratio among strands with data: "${best}" (${(bestRatio * 100).toFixed(1)}%; ties break by canonical order)`
+        : `retention candidate "${pickedTopic}" (RNG tie-break / fallback branch; computed weakest: "${best}")`;
+}
+
 export function formatSkillSnapshotForPrompt(skillProfile, maxTopics = 10) {
     const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
     ensureCanonicalSkillTopicsInPlace(sp);
@@ -221,7 +263,8 @@ export function buildMypConstraintsBlock(level) {
     );
 }
 
-const RETENTION_FRACTION = 0.22;
+/** ~22% of combat prompt builds use retention strand; see docs/TOPIC_ROTATION.md */
+export const RETENTION_FRACTION = 0.22;
 
 /**
  * Pure builder: same logic as the game’s combat user prompt (no global state).
@@ -239,6 +282,12 @@ const RETENTION_FRACTION = 0.22;
  */
 export function buildCombatQuestionUserPrompt(params) {
     const rng = typeof params.rng === "function" ? params.rng : Math.random;
+    const rngRolls = [];
+    const traceRng = () => {
+        const v = rng();
+        rngRolls.push(v);
+        return v;
+    };
     const mapLevel =
         Number.isFinite(params.mapLevel) && params.mapLevel >= 1 ? Math.floor(params.mapLevel) : 1;
     const easier = params.forceEasierNextQuestion === true;
@@ -259,7 +308,7 @@ export function buildCombatQuestionUserPrompt(params) {
     skillProfile = normalizeSkillProfile(skillProfile);
     ensureCanonicalSkillTopicsInPlace(skillProfile);
 
-    const retentionTopic = pickRetentionTopic(skillProfile, rng);
+    const retentionTopic = pickRetentionTopic(skillProfile, traceRng);
     const strandSeq =
         typeof params.strandRotationSeq === "number" && params.strandRotationSeq >= 0
             ? Math.floor(params.strandRotationSeq)
@@ -268,7 +317,7 @@ export function buildCombatQuestionUserPrompt(params) {
     let chosenTopic;
     let topicPedagogyExplanation;
     let usedRetention = false;
-    if (rng() < RETENTION_FRACTION) {
+    if (traceRng() < RETENTION_FRACTION) {
         chosenTopic = retentionTopic;
         usedRetention = true;
         topicPedagogyExplanation = `RETENTION (~${Math.round(RETENTION_FRACTION * 100)}%): reinforce “${retentionTopic}” (under-sampled strands first until ${SKILL_TOPIC_MIN_SAMPLES} attempts each, then lowest success rate among strands with data).`;
@@ -292,15 +341,29 @@ export function buildCombatQuestionUserPrompt(params) {
         avoidPrior = `\n\nThe player was just shown this stem — you must NOT repeat it, reuse the same numbers with different wording, or mirror its structure. Produce a clearly different problem:\n${JSON.stringify(snippet)}`;
     }
 
+    const criterionTitle = MYP_CRITERION_TITLES[targetCriterion] || MYP_CRITERION_TITLES.A;
+    const levelForBand = easier ? 1 : mapLevel;
+    const targetBandLabel =
+        levelForBand <= 3
+            ? "Foundations (early Year 7 readiness)"
+            : levelForBand <= 6
+              ? "IB MYP Year 7"
+              : "IB MYP Year 8";
+
     const promptBody = `[PROMPT_VERSION ${PROMPT_VERSION}] [SEED: ${Date.now()}] [NONCE: ${nonce}]
 
 Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
+
+# CURRENT BATTLE PARAMETERS
+- Topic Syllabus: ${chosenTopic}
+- Target MYP Criterion: Criterion ${targetCriterion} (${criterionTitle})
+- Task Directive: Look at Section 7 of your instructions. You MUST design this question specifically to test Criterion ${targetCriterion} skills using the topic of ${chosenTopic}.
+- Grade Band: ${targetBandLabel} (typical ages ~12–14).
 
 Combat (follow HARD REQUIREMENTS at the end for JSON keys and svg_spec SVG rules):
 - Speaker (enemy): ${JSON.stringify(enemyName)} — taunt in their voice; name self at least once; never use the hero’s name as the monster’s identity.
 - Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
 - Map level: ${mapLevel} · Display difficulty: ${diff} (${difficultyCalculationLine})
-- MYP criterion this round: ${targetCriterion} (A facts/procedures · B patterns/generalisation · C clear math language · D modelling/context)
 - ${topicPedagogyExplanation}
 - Retention candidate when mode is RETENTION: ${retentionTopic}
 - topic_category for this question (verbatim): ${JSON.stringify(chosenTopic)} — syllabus label only, not ${JSON.stringify(enemyName)}’s name (no “Algebras” swarms).
@@ -338,7 +401,10 @@ ${buildMypConstraintsBlock(easier ? 1 : mapLevel)}`;
             rotationTopic,
             retentionTopic,
             usedRetention,
-            strandSeq
+            strandSeq,
+            retentionGateRoll: rngRolls.length ? rngRolls[rngRolls.length - 1] : null,
+            rngRolls,
+            retentionPickRolls: rngRolls.length > 1 ? rngRolls.slice(0, -1) : []
         }
     };
 }
