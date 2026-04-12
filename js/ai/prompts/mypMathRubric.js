@@ -76,6 +76,7 @@ export const IS_CORRECT_RULES = `isCorrect means the response earns credit for t
 - For Criterion B, credit may require a justified pattern or rule even if a single "answer" line matches.
 - For Criterion C, credit may require clear explanation or organised reasoning even when the final value is right.
 - For Criterion D, credit may require interpretation, an assumption, or a comment on reasonableness in context, not only a calculation.
-Set isCorrect true when the work substantially satisfies SUCCESS_CRITERIA for the question; otherwise false.`;
+Set isCorrect true when the work substantially satisfies SUCCESS_CRITERIA for the question; otherwise false.
+Apply Year 7–8 style leniency: if the mathematics and intent are reasonably clear and criteria are largely met, prefer true over nitpicking minor gaps in wording or layout.`;
 
 export const IS_CRIT_RULES = `isCrit is a game flag (not an IB category): true only if isCorrect is true AND score is 8, OR isCorrect is true AND score is 7 with clearly excellent, criterion-specific evidence (not just a correct number). Otherwise false.`;

@@ -53,6 +53,7 @@ If "visual_type" is "none", do not claim a diagram exists in prose. If "visual_t
 - Quantity stories (bags, marbles, gave away, how many left, …): when a picture helps, use the same SVG rules — e.g. three labeled bars for Start, Change, and End on the 100×100 canvas.
 
 ### 6. MATHEMATICAL CONSISTENCY
+- success_criteria: Must align with the criterion letter (A–D) named in the user message; each "- " line must be an observable check the human judge can verify against the stem (do not paste generic bullets from another criterion).
 - Story Mapping: The "text", "expected_answer", "ideal_explanation", and "success_criteria" MUST align perfectly.
 - Money Ledger: If the story says the student holds $30 total, they CANNOT spend $45 unless you explicitly invent a loan or gift card. Ensure the narrative math works.
 - Player-visible self-containment: The app strips "_thought_process" before the player sees the question. Never use scratchpad-only excuses (e.g. "magic loan") to fix a budget that you do not also state in the stem. If budget or extra money matters, one clear sentence in "text"/prose must explain it; otherwise omit cash-on-hand entirely and only give totals the equation needs.

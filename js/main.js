@@ -46,13 +46,12 @@ import {
 } from "./ai/prompts/mathBattleSeeds.js";
 import {
     CANONICAL_SKILL_TOPICS,
-    RETENTION_FRACTION,
     normalizeSkillProfile,
     mergeSkillProfiles,
     ensureCanonicalSkillTopicsInPlace,
     canonicalizeReportedTopic,
     buildCombatQuestionUserPrompt,
-    describeRetentionTopicChoice
+    pickBattlePinnedTopic
 } from "./ai/prompts/combatQuestionPedagogy.js";
 import { parsePlotlySpec, combatQuestionRequiresSvgDiagram } from "./ai/plotlyQuestionHeuristics.js";
 import {
@@ -63,6 +62,10 @@ import {
 
 let practiceActiveQuestion = null;
 let practiceMcqFetchGeneration = 0;
+
+/** Boss fight length tuning: ~four solid hits at base damage to win (criterion A–D pacing). */
+const COMBAT_BOSS_HP = 100;
+const COMBAT_COMBO_MULT = 1.25;
 
  // --- ACTIVE INVARIANTS (THE BLACK BOX) ---
 // Assets are anchored with specific IDs for regression tests to monitor detail levels.
@@ -1116,7 +1119,9 @@ async function initFirebase() {
     renderLevelMenu();
     syncAiRouteNotice();
     syncMapQuestionBufferHint();
-    prefetchQuestion(Math.max(1, typeof state.unlockedLevels === "number" ? state.unlockedLevels : 1));
+    prefetchQuestion(Math.max(1, typeof state.unlockedLevels === "number" ? state.unlockedLevels : 1), {
+        criterionTurnIndex: 0
+    });
     showCloudSyncBadge();
     syncQuestionsApiBadge();
     startCloudSyncHeartbeat();
@@ -1625,19 +1630,19 @@ let loadQuestionInFlight = null;
      container.querySelectorAll("g[data-level]").forEach((g) => {
         const lv = parseInt(g.getAttribute("data-level"), 10);
         const warmPrefetchForNode = () => {
-            if (lv <= state.unlockedLevels) void prefetchQuestion(lv);
+            if (lv <= state.unlockedLevels) void prefetchQuestion(lv, { criterionTurnIndex: 0 });
         };
         g.addEventListener("focus", warmPrefetchForNode);
         g.addEventListener("click", () => {
             if (lv <= state.unlockedLevels) {
-                void prefetchQuestion(lv);
+                void prefetchQuestion(lv, { criterionTurnIndex: 0 });
                 startGame(lv);
             }
         });
         g.addEventListener("keydown", (e) => {
             if ((e.key === "Enter" || e.key === " ") && lv <= state.unlockedLevels) {
                 e.preventDefault();
-                void prefetchQuestion(lv);
+                void prefetchQuestion(lv, { criterionTurnIndex: 0 });
                 startGame(lv);
             }
         });
@@ -1803,67 +1808,67 @@ const FALLBACK_QUESTIONS = [
     const pick = pool[Math.floor(Math.random() * pool.length)];
     return { ...pick, _questionSource: "offline" };
 }
- function buildMathQuestionPrompt(mapLevelOverride) {
+ function buildMathQuestionPrompt(mapLevelOverride, opts = {}) {
     const mapLevel =
         Number.isFinite(mapLevelOverride) && mapLevelOverride >= 1
             ? Math.floor(mapLevelOverride)
             : state.currentLevel;
+    const criterionTurn =
+        typeof opts.criterionTurnIndex === "number" && Number.isFinite(opts.criterionTurnIndex)
+            ? Math.floor(opts.criterionTurnIndex)
+            : state.turnIndex;
     if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
     ensureCanonicalSkillTopicsInPlace(state.skillProfile);
     const strandSeq =
         typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
             ? Math.floor(state.strandRotationSeq)
             : 0;
+    const pinned =
+        state.battlePinnedTopic != null && String(state.battlePinnedTopic).trim() !== ""
+            ? String(state.battlePinnedTopic).trim()
+            : null;
     const profileBefore = {
         strandRotationSeq: strandSeq,
+        battlePinnedTopic: pinned,
         skillProfile: skillProfileCanonicalSnapshotForLog(state.skillProfile),
-        turnIndex: state.turnIndex,
+        turnIndex: criterionTurn,
         mapLevel,
         forceEasierNextQuestion: state.forceEasierNextQuestion === true
     };
     const bundle = buildCombatQuestionUserPrompt({
         mapLevel,
         forceEasierNextQuestion: state.forceEasierNextQuestion === true,
-        turnIndex: state.turnIndex,
+        turnIndex: criterionTurn,
         skillProfile: state.skillProfile,
         strandRotationSeq: strandSeq,
         playerName: state.playerName,
         enemyName: String(getQuestNode(mapLevel)?.name || "Enemy"),
         activeQuestionText: state.activeQuestion?.text ?? null,
+        pinnedTopic: pinned,
         rng: Math.random
     });
     const m = bundle.meta || {};
     const nextSeq = bundle.nextStrandRotationSeq;
     const nextIdx = Number.isFinite(nextSeq) ? Math.floor(nextSeq) : 0;
     const nextRotationStrand = CANONICAL_SKILL_TOPICS[nextIdx % CANONICAL_SKILL_TOPICS.length];
-    const retentionExplain = describeRetentionTopicChoice(state.skillProfile, m.retentionTopic);
     console.groupCollapsed("[topicRotation] combat prompt");
     console.log("1. From student profile (inputs to this prompt build)", profileBefore);
     console.log("2. Topic decision steps", {
         strandSeq: m.strandSeq,
         rotationTopic: m.rotationTopic,
-        retentionCandidate: m.retentionTopic,
-        retentionPickExplain: retentionExplain,
-        rngRollsInsidePickRetention: m.retentionPickRolls,
-        retentionGateRoll: m.retentionGateRoll,
-        retentionGateThreshold: `< ${RETENTION_FRACTION} (${Math.round(RETENTION_FRACTION * 100)}%)`,
-        usedRetentionPath: m.usedRetention,
+        battlePinned: m.battlePinned,
         chosenTopic: bundle.chosenTopic,
         targetCriterion: bundle.targetCriterion,
-        nextStrandRotationSeqAfterThisBuild: nextSeq
+        strandRotationSeqUnchanged: nextSeq
     });
-    state.strandRotationSeq = bundle.nextStrandRotationSeq;
-    const savedProfileSlice = {
+    console.log(
+        "3. Profile: strandRotationSeq advances only at battle start (not here); skill profile unchanged by prompt build"
+    );
+    console.log("4. Next rotation slot index (reference only)", {
         strandRotationSeq: state.strandRotationSeq,
-        skillProfile: skillProfileCanonicalSnapshotForLog(state.skillProfile)
-    };
-    console.log("3. Saved to student profile (localStorage now; cloud on heartbeat / sync)", savedProfileSlice);
-    console.log("4. Next combat prompt rotation strand (CANONICAL_SKILL_TOPICS[nextSeq % 7])", {
-        nextStrandRotationSeq: state.strandRotationSeq,
         nextRotationStrand
     });
     console.groupEnd();
-    if (state.playerName) saveLocalProfile(state.playerName);
     return { prompt: bundle.prompt, chosenTopic: bundle.chosenTopic, targetCriterion: bundle.targetCriterion };
 }
 function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
@@ -2203,7 +2208,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     } catch (_) {}
     return ms;
 }
- async function prefetchQuestion(levelOverride) {
+ async function prefetchQuestion(levelOverride, opts = {}) {
     const targetLevel =
         Number.isFinite(levelOverride) && levelOverride >= 1
             ? Math.floor(levelOverride)
@@ -2217,7 +2222,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         prefetchInFlight = prefetchInFlightCount > 0;
         syncMapQuestionBufferHint();
         syncQuestionsApiBadge();
-        const built = buildMathQuestionPrompt(levelWhenScheduled);
+        const built = buildMathQuestionPrompt(levelWhenScheduled, opts);
         const { dsKey } = getConfiguredAiKeys();
         const cancelLateAi = { cancelled: false };
         const assignIfStillRelevant = (q, allowAfterCatch = false) => {
@@ -2267,7 +2272,18 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         if (pl !== undefined && pl !== level) state.nextQuestion = null;
         else if (pl === undefined && level !== 1) state.nextQuestion = null;
     }
-    state.playerHP = 100; state.enemyHP = 100;
+    state.turnIndex = 0;
+    if (!state.skillProfile || typeof state.skillProfile !== "object") state.skillProfile = normalizeSkillProfile(null);
+    ensureCanonicalSkillTopicsInPlace(state.skillProfile);
+    const battleTopic = pickBattlePinnedTopic(state.skillProfile, state.strandRotationSeq);
+    state.battlePinnedTopic = battleTopic;
+    state.strandRotationSeq =
+        typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
+            ? Math.floor(state.strandRotationSeq) + 1
+            : 1;
+    if (state.playerName) saveLocalProfile(state.playerName);
+    state.playerHP = COMBAT_BOSS_HP;
+    state.enemyHP = COMBAT_BOSS_HP;
     clearBattleDamageOverlay();
     state.comboCount = 0;
     state.comboActive = false;
@@ -2318,7 +2334,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
  async function loadQuestionOnce() {
     clearBattleDamageOverlay();
     if (!state.nextQuestion) {
-        await prefetchQuestion();
+        await prefetchQuestion(undefined, { criterionTurnIndex: state.turnIndex });
     }
     let q = state.nextQuestion;
     state.nextQuestion = null;
@@ -2343,8 +2359,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         syncAiRouteNotice();
         syncMapQuestionBufferHint();
     }
-     prefetchQuestion();
-    
+     prefetchQuestion(undefined, { criterionTurnIndex: state.turnIndex + 1 });
+
     const qEl = document.getElementById('question-text');
     qEl.innerHTML = proseWithMathToHtml(q.text);
     MathJax.typesetPromise([qEl]);
@@ -2465,9 +2481,9 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
  function damageForJudgement(judged) {
     const band = judged?.band;
     const isCrit = judged?.isCrit === true;
-    if (band === "correct_with_reasoning") return { enemy: isCrit ? 100 : 50, player: 0, label: isCrit ? "CRITICAL HIT!" : "DIRECT HIT!", isCrit };
-    if (band === "correct_no_reasoning") return { enemy: 15, player: 0, label: "WEAK HIT!", isCrit: false };
-    if (band === "partial") return { enemy: 10, player: 10, label: "GLANCING HIT!", isCrit: false };
+    if (band === "correct_with_reasoning") return { enemy: isCrit ? 40 : 25, player: 0, label: isCrit ? "CRITICAL HIT!" : "DIRECT HIT!", isCrit };
+    if (band === "correct_no_reasoning") return { enemy: 10, player: 0, label: "WEAK HIT!", isCrit: false };
+    if (band === "partial") return { enemy: 8, player: 10, label: "GLANCING HIT!", isCrit: false };
     return { enemy: 0, player: 20, label: "SPELL FIZZLED!", isCrit: false };
 }
  // --- PRACTICE MODE (MCQ, non-combat) ---
@@ -2844,7 +2860,7 @@ window.nextPracticeQuestion = async () => {
         recordCombatSkillOutcome(q, judged);
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
-        const comboMult = state.comboActive ? 1.5 : 1.0;
+        const comboMult = state.comboActive ? COMBAT_COMBO_MULT : 1.0;
         let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult) : 0;
         let playerDmg = dmg0.player;
         if (state.nextEnemyAttackZero && playerDmg > 0) {
@@ -2900,7 +2916,7 @@ window.nextPracticeQuestion = async () => {
         recordCombatSkillOutcome(q, judged);
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
-        const comboMult = state.comboActive ? 1.5 : 1.0;
+        const comboMult = state.comboActive ? COMBAT_COMBO_MULT : 1.0;
         let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult) : 0;
         let playerDmg = dmg0.player;
         if (state.nextEnemyAttackZero && playerDmg > 0) {
@@ -2991,6 +3007,8 @@ window.nextPracticeQuestion = async () => {
     closeAllMapHudOverlays();
     document.getElementById('battle-screen').classList.add('hidden');
     document.getElementById('level-screen').classList.remove('hidden');
+    state.battlePinnedTopic = null;
+    state.turnIndex = 0;
     state.isAnimating = false;
     syncShardsUi();
     syncEngagementHud();

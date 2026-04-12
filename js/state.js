@@ -9,9 +9,12 @@ export const state = {
     isAnimating: false,
     turnIndex: 0,
     /**
-     * Monotonic counter for CANONICAL_SKILL_TOPICS rotation (persisted in profile).
-     * Unlike turnIndex (advances on graded cast), this advances once per combat question prompt build so
-     * prefetch / reload does not always start on Algebra.
+     * Canonical strand label for the current battle (null on map). Chosen at battle start; all questions
+     * in the fight use this topic. See pickBattlePinnedTopic in combatQuestionPedagogy.js.
+     */
+    battlePinnedTopic: null,
+    /**
+     * Advances once per battle start (persisted). Used with pickBattlePinnedTopic for coverage / weak strands.
      */
     strandRotationSeq: 0,
     skillProfile: null,

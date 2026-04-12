@@ -601,6 +601,7 @@ async function runCombatLab(cfg, args) {
             playerName: args.combatLiveUser,
             enemyName: enemyNameForMapLevel(mapLevel),
             activeQuestionText: null,
+            pinnedTopic: null,
             rng: Math.random
         });
         userText = bundle.prompt;
@@ -611,10 +612,10 @@ async function runCombatLab(cfg, args) {
                 {
                     displayName: args.combatLiveUser,
                     strandRotationSeq,
-                    nextStrandRotationSeqAfterThisPrompt: bundle.nextStrandRotationSeq,
+                    nextStrandRotationSeqUnchanged: bundle.nextStrandRotationSeq,
                     rotationTopic: bundle.meta.rotationTopic,
                     retentionTopic: bundle.meta.retentionTopic,
-                    usedRetention: bundle.meta.usedRetention,
+                    battlePinned: bundle.meta.battlePinned,
                     chosenTopic: bundle.chosenTopic,
                     targetCriterion: bundle.targetCriterion,
                     mapLevel,

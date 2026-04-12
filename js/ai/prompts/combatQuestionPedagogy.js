@@ -1,7 +1,7 @@
 /**
  * Combat question topic rotation, skill snapshots, and user-message body (shared: browser + validate-llm).
  *
- * Full design write-up: docs/TOPIC_ROTATION.md (strand vs MYP criterion, strandRotationSeq, retention ~22%).
+ * Full design write-up: docs/TOPIC_ROTATION.md (strand vs MYP criterion, battle pin, strandRotationSeq).
  */
 
 import { PROMPT_VERSION } from "./contract.js";
@@ -122,6 +122,33 @@ export function canonicalizeReportedTopic(raw) {
  * Retention focus: under-sampled strands first (so one topic cannot monopolize), else lowest success ratio.
  * @param {() => number} rng returns uniform [0,1)
  */
+/**
+ * Deterministic strand for the next battle (or map prefetch): exploration first (canonical order), then
+ * lowest success ratio, else rotation slot. No per-battle RNG — see docs/TOPIC_ROTATION.md.
+ */
+export function pickBattlePinnedTopic(skillProfile, strandRotationSeq) {
+    const sp = normalizeSkillProfile(skillProfile);
+    ensureCanonicalSkillTopicsInPlace(sp);
+    const seq =
+        typeof strandRotationSeq === "number" && strandRotationSeq >= 0 ? Math.floor(strandRotationSeq) : 0;
+    for (const t of CANONICAL_SKILL_TOPICS) {
+        if ((sp[t]?.attempts || 0) < SKILL_TOPIC_MIN_SAMPLES) return t;
+    }
+    let best = CANONICAL_SKILL_TOPICS[0];
+    let bestRatio = 2;
+    for (const t of CANONICAL_SKILL_TOPICS) {
+        const d = sp[t];
+        if (!d || d.attempts < 1) continue;
+        const r = d.corrects / d.attempts;
+        if (r < bestRatio - 1e-9) {
+            bestRatio = r;
+            best = t;
+        }
+    }
+    if (bestRatio < 2 - 1e-9) return best;
+    return CANONICAL_SKILL_TOPICS[seq % CANONICAL_SKILL_TOPICS.length];
+}
+
 export function pickRetentionTopic(skillProfile, rng = Math.random) {
     const sp = skillProfile && typeof skillProfile === "object" ? skillProfile : {};
     ensureCanonicalSkillTopicsInPlace(sp);
@@ -263,8 +290,31 @@ export function buildMypConstraintsBlock(level) {
     );
 }
 
-/** ~22% of combat prompt builds use retention strand; see docs/TOPIC_ROTATION.md */
+/** @deprecated Retention RNG removed; strand chosen via pickBattlePinnedTopic / battle pin. Kept for older scripts. */
 export const RETENTION_FRACTION = 0.22;
+
+/**
+ * Instructions for the LLM: what this criterion tests and how to write success_criteria (judgeable bullets).
+ * @param {string} letter - A | B | C | D
+ */
+export function criterionFocusBlock(letter) {
+    const L = String(letter || "A").toUpperCase().slice(0, 1);
+    const blocks = {
+        A: `CRITERION A — Knowing & understanding (facts & procedures):
+- The stem must require recalling or applying facts, procedures, or standard techniques (compute, simplify, solve, substitute).
+- success_criteria: 2–5 lines starting "- ", each an observable check (e.g. correct operation, final value, correct units if applicable, one sanity check). Align every bullet to the same numbers/context as the stem.`,
+        B: `CRITERION B — Investigating patterns:
+- The stem must ask for pattern recognition, testing cases, a rule, generalisation, or justification of a pattern (not only a single numeric answer with no pattern work).
+- success_criteria: bullets must require evidence of investigation (e.g. examples tested, pattern stated, rule or next term justified).`,
+        C: `CRITERION C — Communicating:
+- The stem must ask for clear explanation: steps, correct vocabulary, or organised reasoning (not only a final answer).
+- success_criteria: bullets must name what “good communication” looks like for this task (e.g. ordered steps, correct terms, logical flow).`,
+        D: `CRITERION D — Applying in real-life contexts:
+- The stem must use a believable context; require modelling choices, interpretation, or reasonableness (e.g. assumption, limitation, units, “does this make sense?”).
+- success_criteria: bullets must include checks for context use and interpretation, not only the algebra.`
+    };
+    return blocks[L] || blocks.A;
+}
 
 /**
  * Pure builder: same logic as the game’s combat user prompt (no global state).
@@ -277,17 +327,11 @@ export const RETENTION_FRACTION = 0.22;
  *   playerName: string | null | undefined,
  *   enemyName: string,
  *   activeQuestionText?: string | null,
+ *   pinnedTopic?: string | null,
  *   rng?: () => number
  * }} params
  */
 export function buildCombatQuestionUserPrompt(params) {
-    const rng = typeof params.rng === "function" ? params.rng : Math.random;
-    const rngRolls = [];
-    const traceRng = () => {
-        const v = rng();
-        rngRolls.push(v);
-        return v;
-    };
     const mapLevel =
         Number.isFinite(params.mapLevel) && params.mapLevel >= 1 ? Math.floor(params.mapLevel) : 1;
     const easier = params.forceEasierNextQuestion === true;
@@ -308,22 +352,20 @@ export function buildCombatQuestionUserPrompt(params) {
     skillProfile = normalizeSkillProfile(skillProfile);
     ensureCanonicalSkillTopicsInPlace(skillProfile);
 
-    const retentionTopic = pickRetentionTopic(skillProfile, traceRng);
     const strandSeq =
         typeof params.strandRotationSeq === "number" && params.strandRotationSeq >= 0
             ? Math.floor(params.strandRotationSeq)
             : 0;
     const rotationTopic = CANONICAL_SKILL_TOPICS[strandSeq % CANONICAL_SKILL_TOPICS.length];
+    const pin = params.pinnedTopic != null && String(params.pinnedTopic).trim() !== "";
     let chosenTopic;
     let topicPedagogyExplanation;
-    let usedRetention = false;
-    if (traceRng() < RETENTION_FRACTION) {
-        chosenTopic = retentionTopic;
-        usedRetention = true;
-        topicPedagogyExplanation = `RETENTION (~${Math.round(RETENTION_FRACTION * 100)}%): reinforce “${retentionTopic}” (under-sampled strands first until ${SKILL_TOPIC_MIN_SAMPLES} attempts each, then lowest success rate among strands with data).`;
+    if (pin) {
+        chosenTopic = String(params.pinnedTopic).trim();
+        topicPedagogyExplanation = `BATTLE PINNED: entire fight uses strand “${chosenTopic}”. Criterion A–D still advances each graded cast.`;
     } else {
-        chosenTopic = rotationTopic;
-        topicPedagogyExplanation = `ROTATION (default): strand is “${rotationTopic}” — cycles through all ${CANONICAL_SKILL_TOPICS.length} MYP strands using persisted strandRotationSeq (increments once per combat question request; independent of turnIndex, which still drives criterion A–D).`;
+        chosenTopic = pickBattlePinnedTopic(skillProfile, strandSeq);
+        topicPedagogyExplanation = `STRAND (prefetch / tools): “${chosenTopic}” from pickBattlePinnedTopic(skillProfile, strandRotationSeq) — exploration & weakness emphasis; strandRotationSeq advances only at battle start in the game.`;
     }
     const skillSnapshot = formatSkillSnapshotForPrompt(skillProfile);
     const nonce =
@@ -350,6 +392,8 @@ export function buildCombatQuestionUserPrompt(params) {
               ? "IB MYP Year 7"
               : "IB MYP Year 8";
 
+    const critFocus = criterionFocusBlock(targetCriterion);
+
     const promptBody = `[PROMPT_VERSION ${PROMPT_VERSION}] [SEED: ${Date.now()}] [NONCE: ${nonce}]
 
 Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
@@ -360,12 +404,16 @@ Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
 - Task Directive: Look at Section 7 of your instructions. You MUST design this question specifically to test Criterion ${targetCriterion} skills using the topic of ${chosenTopic}.
 - Grade Band: ${targetBandLabel} (typical ages ~12–14).
 
+# CRITERION SUCCESS CONTRACT (follow exactly)
+${critFocus}
+- Set JSON "success_criteria" to a single string: several lines starting with "- " so the judge can check each line against the student response. Do not copy generic bullets from another criterion letter.
+
 Combat (follow HARD REQUIREMENTS at the end for JSON keys and svg_spec SVG rules):
 - Speaker (enemy): ${JSON.stringify(enemyName)} — taunt in their voice; name self at least once; never use the hero’s name as the monster’s identity.
 - Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
 - Map level: ${mapLevel} · Display difficulty: ${diff} (${difficultyCalculationLine})
 - ${topicPedagogyExplanation}
-- Retention candidate when mode is RETENTION: ${retentionTopic}
+- Rotation slot index (coverage reference): ${rotationTopic} (strandRotationSeq mod 7).
 - topic_category for this question (verbatim): ${JSON.stringify(chosenTopic)} — syllabus label only, not ${JSON.stringify(enemyName)}’s name (no “Algebras” swarms).
 - Strand shape (math must match, not just the label): ${strandShapeRequirement(chosenTopic)}
 - Strand discipline: The stem must use THIS strand’s mathematics. Do not default to linear algebra (e.g. “solve for x”) when Topic is not Algebra — that wastes the rotation.
@@ -390,7 +438,7 @@ Vary task style with the criterion (solve, simplify, justify pattern, model, int
 ${avoidPrior}
 ${buildMypConstraintsBlock(easier ? 1 : mapLevel)}`;
 
-    const nextStrandRotationSeq = strandSeq + 1;
+    const nextStrandRotationSeq = strandSeq;
 
     return {
         prompt: promptBody,
@@ -399,12 +447,10 @@ ${buildMypConstraintsBlock(easier ? 1 : mapLevel)}`;
         nextStrandRotationSeq,
         meta: {
             rotationTopic,
-            retentionTopic,
-            usedRetention,
+            retentionTopic: chosenTopic,
+            usedRetention: false,
             strandSeq,
-            retentionGateRoll: rngRolls.length ? rngRolls[rngRolls.length - 1] : null,
-            rngRolls,
-            retentionPickRolls: rngRolls.length > 1 ? rngRolls.slice(0, -1) : []
+            battlePinned: pin
         }
     };
 }
