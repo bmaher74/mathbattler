@@ -1454,7 +1454,7 @@ let loadQuestionInFlight = null;
             "Live AI returned HTTP 429 (too many requests). Using the offline question pool. Technical detail: " + err;
     } else if (/no AI API key|no DashScope API key/i.test(err)) {
         state.aiOfflineHint =
-            "No DashScope key in ai-config.js — questions come from the built-in offline pool only.";
+            "No DashScope API key — set DASHSCOPE_API_KEY for the Netlify build (or __dashscope_api_key in ai-config.js locally). Using the offline pool.";
     } else if (/PREFETCH_TIMEOUT|did not finish within|Live AI slow or stalled/i.test(err)) {
         state.aiOfflineHint =
             "Live AI hit the time limit before the question was ready (large prompt, slow API, or multiple retries in one run). Using the offline pool. Allow more time: ?aiTimeoutMs=90000 or window.__prefetch_ai_timeout_ms = 90000.";
@@ -1612,7 +1612,7 @@ let loadQuestionInFlight = null;
         if (!hasKey) {
             setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
             l2.textContent = "Offline only (no key)";
-            root.title = "Add a key in ai-config.js to enable live questions.";
+            root.title = "Add DASHSCOPE_API_KEY (Netlify build) or ai-config.js (local) for live questions.";
             return;
         }
         if (state.aiOfflineHint) {
@@ -1629,7 +1629,7 @@ let loadQuestionInFlight = null;
      if (!hasKey) {
         setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
         l2.textContent = "No API key";
-        root.title = lastAiConnectivityCheck.detail || "Configure ai-config.js";
+        root.title = lastAiConnectivityCheck.detail || "Configure DASHSCOPE_API_KEY (Netlify) or ai-config.js";
         return;
     }
     if (lastAiConnectivityCheck.ok === true) {
@@ -2052,7 +2052,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         lastAiConnectivityCheck = {
             ok: false,
             summary: "No API key",
-            detail: "Set __dashscope_api_key in ai-config.js (Gemini is not used — unavailable in HK)."
+            detail:
+                "Set DASHSCOPE_API_KEY in Netlify (build env) so runtime-config.js includes the key, or __dashscope_api_key in ai-config.js for local file serving."
         };
         set(
             "AI: SKIP",

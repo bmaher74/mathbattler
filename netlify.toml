@@ -1,4 +1,5 @@
 # Math Battler — static deploy (Netlify + optional Cloudflare in front)
+# runtime-config.js must be tracked in Git (stub) so Netlify uploads it; the build overwrites it from env.
 #
 # Cloudflare (DNS + HTTPS to visitors):
 # - Add a CNAME: your hostname → <your-site>.netlify.app, Proxied (orange cloud).

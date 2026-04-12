@@ -2,6 +2,10 @@
 /**
  * Writes repo-root runtime-config.js from process.env (and repo-root .env via loadRootDotEnv).
  * Run during `npm run build` so Netlify and static hosts serve /runtime-config.js without the dev server.
+ *
+ * The repo commits an empty stub `runtime-config.js` so Netlify deploy includes the file (paths only
+ * in .gitignore can be omitted from the publish bundle). After a local build with secrets, do not
+ * commit that file — run `git checkout -- runtime-config.js` to restore the stub.
  */
 import fs from "node:fs";
 import path from "node:path";
