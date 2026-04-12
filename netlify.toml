@@ -1,0 +1,27 @@
+# Math Battler — static deploy (Netlify + optional Cloudflare in front)
+#
+# Cloudflare (DNS + HTTPS to visitors):
+# - Add a CNAME: your hostname → <your-site>.netlify.app, Proxied (orange cloud).
+# - SSL/TLS → Overview → Full (strict). Avoid "Flexible" (origin must be HTTPS-capable; Netlify is).
+# - Add the same hostname under Netlify → Domain management → Custom domains.
+#
+# Netlify → Environment variables (optional; baked into runtime-config.js at build time):
+# DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, DASHSCOPE_MODEL, DASHSCOPE_CHAT_COMPLETIONS_URL,
+# FIREBASE_CONFIG_JSON or FIREBASE_API_KEY + FIREBASE_PROJECT_ID + other FIREBASE_* fields.
+#
+# Firebase Console → Authentication → Settings → Authorized domains:
+# - <your-site>.netlify.app
+# - your custom domain(s) once DNS points here
+
+[build]
+  command = "npm run build"
+  publish = "."
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Match local dev (serve-static serves runtime-config with no-store)
+[[headers]]
+  for = "/runtime-config.js"
+  [headers.values]
+    Cache-Control = "no-store"

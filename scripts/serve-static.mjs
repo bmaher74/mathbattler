@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRootDotEnvIntoProcessEnv } from "./loadRootDotEnv.mjs";
+import { runtimeConfigJs } from "./runtimeConfigJs.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -40,55 +41,6 @@ const MIME = {
     ".webp": "image/webp"
 };
 
-function jsStringLiteral(s) {
-    return JSON.stringify(String(s ?? ""));
-}
-
-function runtimeConfigJs() {
-    const dsKey = process.env.DASHSCOPE_API_KEY || "";
-    const dsBase = process.env.DASHSCOPE_BASE_URL || "";
-    const dsModel = process.env.DASHSCOPE_MODEL || "";
-    const dsChatUrl = process.env.DASHSCOPE_CHAT_COMPLETIONS_URL || "";
-
-    // Firebase: allow either a single JSON string or individual fields.
-    const fbJson = process.env.FIREBASE_CONFIG_JSON || "";
-    const fbApiKey = process.env.FIREBASE_API_KEY || "";
-    const fbAuthDomain = process.env.FIREBASE_AUTH_DOMAIN || "";
-    const fbProjectId = process.env.FIREBASE_PROJECT_ID || "";
-    const fbStorageBucket = process.env.FIREBASE_STORAGE_BUCKET || "";
-    const fbMessagingSenderId = process.env.FIREBASE_MESSAGING_SENDER_ID || "";
-    const fbAppId = process.env.FIREBASE_APP_ID || "";
-    const fbMeasurementId = process.env.FIREBASE_MEASUREMENT_ID || "";
-
-    return (
-        `// Generated at request time by scripts/serve-static.mjs\n` +
-        `// Values are sourced from process.env (and repo-root .env for local dev).\n` +
-        `// Do NOT commit secrets into JS files; use .env + this endpoint.\n` +
-        `(function(){\n` +
-        `  window.__dashscope_api_key = ${jsStringLiteral(dsKey)};\n` +
-        `  if (${jsStringLiteral(dsBase)}.trim()) window.__dashscope_base_url = ${jsStringLiteral(dsBase)};\n` +
-        `  if (${jsStringLiteral(dsModel)}.trim()) window.__dashscope_model = ${jsStringLiteral(dsModel)};\n` +
-        `  if (${jsStringLiteral(dsChatUrl)}.trim()) window.__dashscope_chat_completions_url = ${jsStringLiteral(dsChatUrl)};\n` +
-        `\n` +
-        `  // Firebase config must be a JSON string in window.__firebase_config.\n` +
-        `  var fbJson = ${jsStringLiteral(fbJson)};\n` +
-        `  if (fbJson.trim()) {\n` +
-        `    window.__firebase_config = fbJson;\n` +
-        `  } else if (${jsStringLiteral(fbApiKey)}.trim() && ${jsStringLiteral(fbProjectId)}.trim()) {\n` +
-        `    window.__firebase_config = JSON.stringify({\n` +
-        `      apiKey: ${jsStringLiteral(fbApiKey)},\n` +
-        `      authDomain: ${jsStringLiteral(fbAuthDomain)},\n` +
-        `      projectId: ${jsStringLiteral(fbProjectId)},\n` +
-        `      storageBucket: ${jsStringLiteral(fbStorageBucket)},\n` +
-        `      messagingSenderId: ${jsStringLiteral(fbMessagingSenderId)},\n` +
-        `      appId: ${jsStringLiteral(fbAppId)},\n` +
-        `      measurementId: ${jsStringLiteral(fbMeasurementId)}\n` +
-        `    });\n` +
-        `  }\n` +
-        `})();\n`
-    );
-}
-
 function resolvePath(urlPath) {
     let rel = urlPath === "/" || urlPath === "" ? "index.html" : urlPath.replace(/^\/+/, "");
     if (rel.endsWith("/")) rel += "index.html";
@@ -119,7 +71,15 @@ const server = http.createServer((req, res) => {
             return;
         }
         res.writeHead(200);
-        res.end(runtimeConfigJs());
+        res.end(
+            runtimeConfigJs(process.env, {
+                bannerLines: [
+                    "// Generated at request time by scripts/serve-static.mjs",
+                    "// Values are sourced from process.env (and repo-root .env for local dev).",
+                    "// Do NOT commit secrets into JS files; use .env + this endpoint."
+                ]
+            })
+        );
         return;
     }
 
