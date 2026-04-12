@@ -25,6 +25,9 @@
   # previous deploy (without this file) stays live → /runtime-config.js 404.
   # https://docs.netlify.com/build/environment-variables/secrets-controller/#configure-secret-scanning
   SECRETS_SCAN_OMIT_PATHS = "runtime-config.js"
+  # BASE_URL and MODEL match public defaults in ai-config.js, main.js, samples — not unique secrets.
+  # If marked "secret" in Netlify, scanning flags every file that contains the same strings.
+  SECRETS_SCAN_OMIT_KEYS = "DASHSCOPE_BASE_URL,DASHSCOPE_MODEL"
 
 # Match local dev (serve-static serves runtime-config with no-store)
 [[headers]]
