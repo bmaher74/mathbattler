@@ -239,7 +239,8 @@ export function strandShapeRequirement(topic) {
         "Fractions & Percent":
             "The core task must require fractions, ratios, percents, or decimal proportion reasoning as the main mathematical move (not just integers dressed as a story).",
         "Patterns & Sequences":
-            "The core task must feature a sequence, table, or repeating rule; the student finds a pattern, next term, nth term, or justifies a rule—avoid unrelated percent-of-wallet chains.",
+            "The core task must feature a sequence, table, or repeating rule; the student finds a pattern, next term, nth term, or justifies a rule—avoid unrelated percent-of-wallet chains. " +
+            "Use consistent indexed notation in the stem via \\(...\\) (e.g. \\(a_1\\), \\(a_2\\), \\(a_n\\), or \\(T_n\\)); do not expect the student to reproduce LaTeX or true subscripts in the answer box—success_criteria must accept plain-text equivalents (a_1, a sub 1, T sub n, etc.).",
         "Data & Probability":
             "The core task must feature data (table, chart read-off, mean/median/range) or probability from counts/outcomes—statistics or chance must be central.",
         "Real-Life Modeling":
@@ -305,10 +306,11 @@ export function criterionFocusBlock(letter) {
 - success_criteria: 2–5 lines starting "- ", each an observable check (e.g. correct operation, final value, correct units if applicable, one sanity check). Align every bullet to the same numbers/context as the stem.`,
         B: `CRITERION B — Investigating patterns:
 - The stem must ask for pattern recognition, testing cases, a rule, generalisation, or justification of a pattern (not only a single numeric answer with no pattern work).
-- success_criteria: bullets must require evidence of investigation (e.g. examples tested, pattern stated, rule or next term justified).`,
+- If the sequence uses term labels, name them consistently in the stem with \\(...\\) (e.g. \\(a_1\\), \\(a_2\\), \\(a_n\\)). Remind students they may write answers in plain text (e.g. a_1, a sub 1, T sub n).
+- success_criteria: bullets must require evidence of investigation (e.g. examples tested, pattern stated, rule or next term justified). Do not require formatted subscripts in the typed answer; credit clear plain-text or verbal equivalents.`,
         C: `CRITERION C — Communicating:
 - The stem must ask for clear explanation: steps, correct vocabulary, or organised reasoning (not only a final answer).
-- success_criteria: bullets must name what “good communication” looks like for this task (e.g. ordered steps, correct terms, logical flow).`,
+- success_criteria: bullets must name what “good communication” looks like for this task (e.g. ordered steps, correct terms, logical flow). The answer box is plain text only—do not demand LaTeX, Unicode subscripts, or special symbols; underscore or “sub” wording counts as correct notation when unambiguous.`,
         D: `CRITERION D — Applying in real-life contexts:
 - The stem must use a believable context; require modelling choices, interpretation, or reasonableness (e.g. assumption, limitation, units, “does this make sense?”).
 - success_criteria: bullets must include checks for context use and interpretation, not only the algebra.`
@@ -328,6 +330,7 @@ export function criterionFocusBlock(letter) {
  *   enemyName: string,
  *   activeQuestionText?: string | null,
  *   pinnedTopic?: string | null,
+ *   cosmeticsTier?: number,
  *   rng?: () => number
  * }} params
  */
@@ -372,9 +375,15 @@ export function buildCombatQuestionUserPrompt(params) {
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-    const contextSeed = MATH_BATTLE_CONTEXT_SEEDS[pickSeededIndex(nonce, "ctx", MATH_BATTLE_CONTEXT_SEEDS.length)];
+    const cosmeticsTier = Math.min(
+        5,
+        Math.max(0, Math.floor(typeof params.cosmeticsTier === "number" ? params.cosmeticsTier : 0))
+    );
+    /** Mix hero evolution tier into seeded picks so taunt/delivery variety tracks prestige without a second API call. */
+    const seedKey = `${nonce}::tier${cosmeticsTier}`;
+    const contextSeed = MATH_BATTLE_CONTEXT_SEEDS[pickSeededIndex(seedKey, "ctx", MATH_BATTLE_CONTEXT_SEEDS.length)];
     const dmDeliveryNudge =
-        MATH_BATTLE_DM_DELIVERY_NUDGES[pickSeededIndex(nonce, "dm", MATH_BATTLE_DM_DELIVERY_NUDGES.length)];
+        MATH_BATTLE_DM_DELIVERY_NUDGES[pickSeededIndex(seedKey, "dm", MATH_BATTLE_DM_DELIVERY_NUDGES.length)];
 
     let avoidPrior = "";
     const prevStem = params.activeQuestionText;
@@ -410,6 +419,7 @@ ${critFocus}
 
 Combat (follow HARD REQUIREMENTS at the end for JSON keys and svg_spec SVG rules):
 - Speaker (enemy): ${JSON.stringify(enemyName)} — taunt in their voice; name self at least once; never use the hero’s name as the monster’s identity.
+- Hero evolution tier (staff upgrades, 0–5): ${cosmeticsTier}. Higher tiers → more wary or respectful opening taunt; lower tiers → cockier or dismissive. Stay consistent with the creative sparks below.
 - Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
 - Map level: ${mapLevel} · Display difficulty: ${diff} (${difficultyCalculationLine})
 - ${topicPedagogyExplanation}
@@ -427,6 +437,7 @@ Structure & content:
 - Single JSON object, no fences (details in HARD REQUIREMENTS). type "input", criterion "${targetCriterion}", no MCQ.
 - Word problems: one consistent unit/ledger end-to-end; expected_answer and ideal_explanation match that ledger. One variable, one meaning (do not use x for both a count and a unit price). If you state cash on hand, the purchase total must be possible with that cash unless you explain extra money.
 - Stem (player-readable question): EITHER (a) one string in "text", OR (b) when real US dollar money and algebra both appear: "text_blocks" — in prose, $ is ONLY for currency (e.g. "$5"); never $x$ or $3x+5$ in prose (that caused broken math rendering). Put every equation in inline_math; do not duplicate the same equation in prose and inline_math. Order: prose → inline_math (equation) → optional prose (question). Latex fields: no $ or \\(...\\); the app wraps them.
+- Student answers are typed in a plain box: no LaTeX there. For sequences/indexed terms, show notation correctly in the stem (\\(...\\)) but do not expect students to type delimiters; optional hint that "a_1" or "a sub 1" is fine. success_criteria must be judgeable against plain-text responses.
 - If you use "text" only: Math in \\(...\\) only; currency like $5 once, not $5$; in JSON double backslashes in TeX (\\\\text, \\\\times, \\\\frac).
 - If you use "text_blocks": omit the "text" key entirely (schema rejects both stem modes at once).
 - ideal_explanation: final polished solution only (max 4 sentences); smart 10-year-old voice; formulas only in \\(...\\); no scratchpad or self-corrections.

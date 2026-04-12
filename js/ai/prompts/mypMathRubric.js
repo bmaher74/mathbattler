@@ -15,7 +15,11 @@ export const PLAIN_TEXT_RESPONSE_RULES =
     "The student can only type plain text (no drawings, uploads, or handwritten work). " +
     "Do not require graphs, number lines, or tables as images. " +
     "If a representation matters, accept a clear verbal description (e.g. how they would plot points, read a scale, or lay out a table in words). " +
-    "Keyboard notation such as x, *, parentheses, and words for fractions is fine.";
+    "Keyboard notation such as x, *, parentheses, and words for fractions is fine. " +
+    "The answer box does not render LaTeX and cannot show true subscripts or superscripts: treat these as equivalent when intent is clear: " +
+    "underscore forms (a_1, a_2, T_n, x^2), verbal \"sub\" phrases (\"a sub 1\", \"C sub 2\", \"T sub n\"), " +
+    "or explicit words like \"C(subscript 2)\" or \"nth term\". " +
+    "Never penalize score or band for using these plain-text forms instead of formatted mathematics.";
 
 const LEVEL_ANCHORS =
     "Use achievement level 0–8 for the TARGET CRITERION ONLY (not an average across criteria). " +

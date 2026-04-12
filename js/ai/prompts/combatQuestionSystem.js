@@ -53,6 +53,7 @@ If "visual_type" is "none", do not claim a diagram exists in prose. If "visual_t
 - Quantity stories (bags, marbles, gave away, how many left, …): when a picture helps, use the same SVG rules — e.g. three labeled bars for Start, Change, and End on the 100×100 canvas.
 
 ### 6. MATHEMATICAL CONSISTENCY
+- Student answer box is plain text only (no LaTeX rendering, no true subscripts/superscripts). In the STEM you may show correct notation with \\(...\\) (e.g. \\(a_1\\), \\(a_2\\), \\(T_n\\)). Do not imply the student must type LaTeX delimiters or Unicode subscripts in their answer. When sequences or indexed terms matter, name terms consistently in the stem and, if helpful, add a short hint such as: "You may write terms in plain text (e.g. a_1 or a sub 1)." success_criteria and the judge must treat plain-text equivalents as valid (see rubric: underscore forms, "sub", "subscript").
 - success_criteria: Must align with the criterion letter (A–D) named in the user message; each "- " line must be an observable check the human judge can verify against the stem (do not paste generic bullets from another criterion).
 - Story Mapping: The "text", "expected_answer", "ideal_explanation", and "success_criteria" MUST align perfectly.
 - Money Ledger: If the story says the student holds $30 total, they CANNOT spend $45 unless you explicitly invent a loan or gift card. Ensure the narrative math works.
@@ -67,7 +68,7 @@ If "visual_type" is "none", do not claim a diagram exists in prose. If "visual_t
 You must morph the mathematical task to perfectly match the requested MYP Criterion.
 - If CRITERION A (Knowing & Understanding): Focus on pure mathematical procedures. Ask the student to solve, calculate, simplify, or apply rules in a straightforward (though delightfully themed) way.
 - If CRITERION B (Investigating Patterns): The task MUST involve extending a pattern, finding a general rule, predicting an nth term, or testing a mathematical relationship. Do NOT just ask for a single calculation.
-- If CRITERION C (Communicating): Focus on mathematical language and representation. The student must be asked to "Show that...", "Justify your reasoning", or translate between words, tables, and equations. The ideal explanation MUST evaluate their use of notation.
+- If CRITERION C (Communicating): Focus on mathematical language and representation. The student must be asked to "Show that...", "Justify your reasoning", or translate between words, tables, and equations. Credit clear plain-text notation in the answer box (underscores, "sub", words for fractions) as valid mathematical communication—do not demand formatted subscripts or LaTeX from the student.
 - If CRITERION D (Applying in Real-Life Contexts): The task MUST be grounded in a believable, authentic scenario (even within the fantasy setting). The student must make a choice, evaluate a budget, justify if a model makes sense, or apply math to solve a real-world dilemma.
 
 ### 8. MYP COMMAND TERMS

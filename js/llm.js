@@ -1,4 +1,10 @@
 import { state, safeSet, MAX_RECENT_STEMS, normalizeQuestionStem, rememberQuestionStem } from "./state.js";
+import {
+    MAX_COSMETIC_TIER,
+    COSMETIC_EVOLUTION_OPTIONS,
+    buildCosmeticEvolutionExtra,
+    buildHeroWeaponOverlay
+} from "./cosmeticEvolution.js";
 import { composeCombatStemTextFromBlocks } from "./ai/combatTextBlocks.js";
 import { runDashScopeJudge } from "./ai/runDashScopeJudge.js";
 import { localFallbackJudge } from "./ai/localFallbackJudge.js";
@@ -228,11 +234,12 @@ function mergeProfileRecords(cloudDoc, localDoc) {
         typeof c.shards === "number" ? Math.floor(c.shards) : 0,
         typeof l.shards === "number" ? Math.floor(l.shards) : 0
     );
-    const cosmeticsTier = Math.max(
+    const cosmeticsTierRaw = Math.max(
         0,
         typeof c.cosmeticsTier === "number" ? Math.floor(c.cosmeticsTier) : 0,
         typeof l.cosmeticsTier === "number" ? Math.floor(l.cosmeticsTier) : 0
     );
+    const cosmeticsTier = Math.min(MAX_COSMETIC_TIER, cosmeticsTierRaw);
     const bestiary = (() => {
         const arrC = Array.isArray(c.bestiary) ? c.bestiary : [];
         const arrL = Array.isArray(l.bestiary) ? l.bestiary : [];
@@ -587,26 +594,19 @@ async function initFirebase() {
     void syncCurrentProfileToCloud();
 };
  function renderPlayerSprite() {
-    const tier = typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0;
+    const tier = Math.min(
+        MAX_COSMETIC_TIER,
+        Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0))
+    );
     const base = ASSETS.wizard;
     if (tier <= 0) {
         safeSet("player-sprite", base, "innerHTML");
         return;
     }
-    // Cosmetic layering: add extra glyphs/aura around the existing wizard SVG.
     const inner = svgInnerMarkup(base);
-    const extra =
-        tier === 1
-            ? `<g opacity="0.85">
-                   <circle cx="50" cy="54" r="36" fill="none" stroke="#a5b4fc" stroke-width="2" opacity="0.55"/>
-                   <polygon points="50,12 56,26 72,28 60,38 64,54 50,46 36,54 40,38 28,28 44,26" fill="#7c3aed" opacity="0.25"/>
-               </g>`
-            : `<g opacity="0.9">
-                   <circle cx="50" cy="54" r="38" fill="none" stroke="#facc15" stroke-width="2" opacity="0.35"/>
-                   <circle cx="50" cy="54" r="30" fill="none" stroke="#a78bfa" stroke-width="2" opacity="0.35"/>
-                   <path d="M20 76 Q50 52 80 76" fill="none" stroke="#60a5fa" stroke-width="3" opacity="0.35"/>
-               </g>`;
-    const upgraded = `<svg viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_10px_20px_rgba(59,130,246,0.6)]" xmlns="http://www.w3.org/2000/svg">${inner}${extra}</svg>`;
+    const weapon = buildHeroWeaponOverlay(tier);
+    const extra = buildCosmeticEvolutionExtra(tier);
+    const upgraded = `<svg viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_10px_20px_rgba(59,130,246,0.6)]" xmlns="http://www.w3.org/2000/svg">${inner}${weapon}${extra}</svg>`;
     safeSet("player-sprite", upgraded, "innerHTML");
 }
  function syncShardsUi() {
@@ -677,40 +677,66 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
     safeSet("upgrades-shards", String(Math.max(0, Math.floor(state.shards || 0))));
     const list = document.getElementById("upgrades-list");
     if (!list) return;
-    const tier = typeof state.cosmeticsTier === "number" ? Math.max(0, Math.floor(state.cosmeticsTier)) : 0;
-    const options = [
-        { tier: 1, cost: 100, title: "Staff of Geometry", desc: "A sharper aura around your cloak." },
-        { tier: 2, cost: 250, title: "Axiom Halo", desc: "Golden rings of logic orbit you." }
-    ];
-    list.innerHTML = options
-        .map((o) => {
-            const owned = tier >= o.tier;
-            const canBuy = !owned && (state.shards || 0) >= o.cost;
-            return `
+    const curTier = Math.min(
+        MAX_COSMETIC_TIER,
+        Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0))
+    );
+    const shards = Math.max(0, Math.floor(state.shards || 0));
+    list.innerHTML = COSMETIC_EVOLUTION_OPTIONS.map((o) => {
+        const evolved = curTier >= o.tier;
+        const isNext = o.tier === curTier + 1;
+        const locked = o.tier > curTier + 1;
+        const canEvolve = isNext && !locked && shards >= o.cost;
+        let btnLabel;
+        let btnClass;
+        let disabled = true;
+        if (evolved) {
+            btnLabel = "Evolved";
+            btnClass = "border-slate-600 bg-slate-900/40 text-slate-400";
+        } else if (locked) {
+            btnLabel = "Locked";
+            btnClass = "border-slate-700 bg-slate-900/30 text-slate-500";
+        } else if (isNext) {
+            disabled = !canEvolve;
+            btnLabel = canEvolve ? "Evolve" : "Need shards";
+            btnClass = canEvolve
+                ? "border-emerald-600 bg-emerald-700/30 hover:bg-emerald-600/40 text-emerald-100"
+                : "border-slate-700 bg-slate-900/30 text-slate-500";
+        } else {
+            btnLabel = "—";
+            btnClass = "border-slate-700 bg-slate-900/30 text-slate-500";
+        }
+        return `
             <div class="border border-slate-700 rounded-xl bg-slate-900/40 p-4">
                 <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
-                        <div class="font-black text-slate-100">${o.title}</div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-[10px] font-black uppercase tracking-wider text-indigo-300/90 border border-indigo-500/50 px-2 py-0.5 rounded-md">Stage ${o.stage}</span>
+                            <div class="font-black text-slate-100">${o.title}</div>
+                        </div>
                         <div class="text-[12px] text-slate-400 mt-1">${o.desc}</div>
                     </div>
                     <div class="shrink-0 text-right">
-                        <div class="text-xs font-black uppercase text-amber-200">${owned ? "Owned" : `${o.cost} shards`}</div>
-                        <button type="button" ${canBuy ? "" : "disabled"}
+                        <div class="text-xs font-black uppercase text-amber-200">${evolved ? "Unlocked" : `${o.cost} shards`}</div>
+                        <button type="button" ${disabled ? "disabled" : ""}
                             onclick="buyUpgrade(${o.tier}, ${o.cost})"
-                            class="mt-2 px-3 py-2 rounded-lg text-xs font-black uppercase border ${canBuy ? "border-emerald-600 bg-emerald-700/30 hover:bg-emerald-600/40" : owned ? "border-slate-700 bg-slate-900/30 text-slate-400" : "border-slate-700 bg-slate-900/30 text-slate-500"}">
-                            ${owned ? "Equipped" : canBuy ? "Buy" : "Need more"}
+                            class="mt-2 px-3 py-2 rounded-lg text-xs font-black uppercase border ${btnClass}">
+                            ${btnLabel}
                         </button>
                     </div>
                 </div>
             </div>`;
-        })
-        .join("");
+    }).join("");
 }
  window.buyUpgrade = (tier, cost) => {
     const t = Math.max(0, Math.floor(tier || 0));
     const c = Math.max(0, Math.floor(cost || 0));
-    const curTier = Math.max(0, Math.floor(state.cosmeticsTier || 0));
-    if (t <= curTier) return;
+    const curTier = Math.min(
+        MAX_COSMETIC_TIER,
+        Math.max(0, Math.floor(state.cosmeticsTier || 0))
+    );
+    if (t > MAX_COSMETIC_TIER || t < 1) return;
+    if (t !== curTier + 1) return;
     const shards = Math.max(0, Math.floor(state.shards || 0));
     if (shards < c) return;
     state.shards = shards - c;
@@ -1432,7 +1458,8 @@ Tone & Narrative (CRITICAL):
   2) The Equation/Problem: the actual math question immediately after, stated clearly. Do NOT hide the math in a confusing word problem unless the topic is Real-Life Modeling.
 
 Technical & Formatting Constraints:
-- All math notation MUST use LaTeX (e.g., $x^2 + 5 = 14$).
+- All math notation in the QUESTION STEM (text / ideal_explanation / expected_answer fields) MUST use LaTeX as usual (e.g., $x^2 + 5 = 14$).
+- Students type answers in a plain textarea: they cannot render subscripts, superscripts, or LaTeX. Do not word questions so they must reproduce formatted subscripts in the answer; e.g. for sequences use indexed notation in the stem but accept that students will write plain equivalents (a_1, a sub 1, T sub n, C(subscript 2), etc.). Acknowledge this limitation and make suggestions about acceptable plain text work arounds when suggesting how to get higher marks
 - IMPORTANT: When using units like cm, m, or percent, ALWAYS wrap them in \\text{} (e.g., $25 \\text{ cm}$).
 - Combat questions MUST be open-ended typed response: type MUST be "input" and there MUST NOT be MCQ options in the combat schema.
 - Return JSON ONLY (no markdown, no code fences).
