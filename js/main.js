@@ -80,6 +80,16 @@ import {
 let practiceActiveQuestion = null;
 let practiceMcqFetchGeneration = 0;
 
+/** Set in runtime-config.js (Netlify CONTEXT=production). Override with ?debug=1 for QA. */
+function isProductionUi() {
+    try {
+        if (typeof URLSearchParams !== "undefined" && new URLSearchParams(location.search).get("debug") === "1") {
+            return false;
+        }
+    } catch (_) {}
+    return !!window.__mathbattler_production_ui__;
+}
+
 /** Boss fight length tuning: ~four solid hits at base damage to win (criterion A–D pacing). */
 const COMBAT_BOSS_HP = 100;
 const COMBAT_COMBO_MULT = 1.25;
@@ -1471,6 +1481,7 @@ let loadQuestionInFlight = null;
     }
 }
  function syncAiRouteNotice() {
+    if (isProductionUi()) return;
     const el = document.getElementById("ai-route-notice");
     if (!el) return;
     if (state.aiOfflineHint) {
@@ -1482,6 +1493,7 @@ let loadQuestionInFlight = null;
     }
 }
  function syncMapQuestionBufferHint() {
+    if (isProductionUi()) return;
     const el = document.getElementById("map-question-buffer-hint");
     if (!el) return;
     const parts = [];
@@ -1511,6 +1523,7 @@ let loadQuestionInFlight = null;
             : "text-slate-500");
 }
  function updateQuestionSourceBadge(q) {
+    if (isProductionUi()) return;
     const el = document.getElementById("question-source-badge");
     if (!el) return;
     if (!q) {
@@ -1546,6 +1559,7 @@ let loadQuestionInFlight = null;
     }
 }
  function syncQuestionsApiBadge() {
+    if (isProductionUi()) return;
     const root = document.getElementById("ai-questions-status");
     const l2 = document.getElementById("ai-status-line2");
     if (!root || !l2) return;
@@ -3359,6 +3373,6 @@ wireBgmVisibility();
 applyAudioFromState();
  loadRecentStems();
 state.bossCacheByLevel = loadBossCache();
-runRegressions();
+if (!isProductionUi()) runRegressions();
 initFirebase();
     

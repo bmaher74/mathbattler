@@ -8,6 +8,27 @@
     <script src="firebase-config.js"></script>
     <!-- Local dev: scripts/serve-static.mjs serves this from .env (no-store); overwrites __firebase_config when FIREBASE_* / FIREBASE_CONFIG_JSON set. -->
     <script src="runtime-config.js"></script>
+    <script>
+    (function () {
+        try {
+            if (window.__mathbattler_production_ui__) {
+                document.documentElement.classList.add("mb-production-ui");
+            }
+        } catch (e) {}
+        try {
+            if (!window.__mathbattler_production_ui__) return;
+            if (typeof URLSearchParams !== "undefined" && new URLSearchParams(location.search).get("debug") === "1") return;
+            var noop = function () {};
+            console.log = noop;
+            console.info = noop;
+            console.debug = noop;
+            console.warn = noop;
+            console.group = noop;
+            console.groupCollapsed = noop;
+            console.groupEnd = noop;
+        } catch (e2) {}
+    })();
+    </script>
     <!-- Optional live AI: Alibaba DashScope (Qwen) only — see ai-config.sample.js -->
     <script src="ai-config.js"></script>
     <script>

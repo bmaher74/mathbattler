@@ -9,6 +9,8 @@
 # Netlify → Environment variables (optional; baked into runtime-config.js at build time):
 # DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, DASHSCOPE_MODEL, DASHSCOPE_CHAT_COMPLETIONS_URL,
 # FIREBASE_CONFIG_JSON or FIREBASE_API_KEY + FIREBASE_PROJECT_ID + other FIREBASE_* fields.
+# CONTEXT=production (set by Netlify) enables streamlined UI (no integrity strip / API debug). Override with
+# MATHBATTLER_PRODUCTION_UI=0 on production if needed, or add ?debug=1 to the URL to show dev UI.
 #
 # Firebase Console → Authentication → Settings → Authorized domains:
 # - <your-site>.netlify.app

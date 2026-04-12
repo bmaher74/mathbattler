@@ -7,6 +7,14 @@ export function jsStringLiteral(s) {
     return JSON.stringify(String(s ?? ""));
 }
 
+/** Netlify sets CONTEXT=production for production deploys; optional MATHBATTLER_PRODUCTION_UI=0/1 to override. */
+export function productionUiFromEnv(env) {
+    const raw = String(env.MATHBATTLER_PRODUCTION_UI ?? "").trim().toLowerCase();
+    if (raw === "1" || raw === "true" || raw === "yes") return true;
+    if (raw === "0" || raw === "false" || raw === "no") return false;
+    return env.CONTEXT === "production";
+}
+
 /**
  * @param {NodeJS.ProcessEnv} [env]
  * @param {{ bannerLines?: string[] }} [opts]
@@ -54,6 +62,7 @@ export function runtimeConfigJs(env = process.env, opts = {}) {
         `      measurementId: ${jsStringLiteral(fbMeasurementId)}\n` +
         `    });\n` +
         `  }\n` +
+        `  window.__mathbattler_production_ui__ = ${productionUiFromEnv(env) ? "true" : "false"};\n` +
         `})();\n`
     );
 }

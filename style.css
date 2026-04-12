@@ -284,3 +284,16 @@
 .flair-badge--mint .flair-badge-icon {
     filter: drop-shadow(0 0 4px rgba(45, 212, 191, 0.35));
 }
+
+/* Netlify production (runtime-config sets __mathbattler_production_ui__; ?debug=1 restores dev UI) */
+.mb-production-ui #test-panel,
+.mb-production-ui #cloud-sync-badge,
+.mb-production-ui #ai-questions-status,
+.mb-production-ui #map-question-buffer-hint,
+.mb-production-ui #question-source-badge,
+.mb-production-ui #ai-route-notice {
+    display: none !important;
+}
+.mb-production-ui #engagement-toast {
+    top: 0.5rem;
+}
