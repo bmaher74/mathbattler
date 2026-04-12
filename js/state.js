@@ -62,6 +62,13 @@ export const state = {
         earnedFlair: [],
         lifetimePracticeGrants: 0
     },
+    /** Persisted: music/SFX levels and mutes (see audioSettings.js). */
+    audio: {
+        musicVolume: 1,
+        sfxVolume: 1,
+        musicMuted: false,
+        sfxMuted: false
+    },
     /** In-battle only: participation grants for this fight */
     _battleParticipation: { firstCastDone: false, reflectionDone: false }
 };

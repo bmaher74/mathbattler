@@ -13,6 +13,13 @@ import {
 } from "./cosmeticEvolution.js";
 import { pickEnemyTaunt } from "./enemyTaunts.js";
 import { startMapBgmFromUserGesture, startCombatBgmFromUserGesture, wireBgmVisibility } from "./bgm.js";
+import { playHeroSpellImpact, playEnemyStrike, bossStrikeSoundIndex } from "./combatSfx.js";
+import {
+    mergeProfileAudio,
+    applyAudioFromState,
+    normalizeAudioSettings,
+    patchAudioSettings
+} from "./audioSettings.js";
 import {
     appId,
     state,
@@ -348,7 +355,8 @@ function safeProfileDocId(displayName) {
             strandRotationSeq:
                 typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
                     ? Math.floor(state.strandRotationSeq)
-                    : 0
+                    : 0,
+            audio: normalizeAudioSettings(state.audio)
         }));
     } catch (e) { console.warn("saveLocalProfile", e); }
 }
@@ -550,6 +558,7 @@ function mergeProfileRecords(cloudDoc, localDoc) {
     const srLocal =
         typeof l.strandRotationSeq === "number" && l.strandRotationSeq >= 0 ? Math.floor(l.strandRotationSeq) : 0;
     const strandRotationSeq = Math.max(srCloud, srLocal);
+    const audio = mergeProfileAudio(c, l);
     return {
         unlockedLevels,
         skillProfile,
@@ -558,7 +567,8 @@ function mergeProfileRecords(cloudDoc, localDoc) {
         bestiary,
         bossCacheByLevel,
         engagement,
-        strandRotationSeq
+        strandRotationSeq,
+        audio
     };
 }
 function engagementSnapshotFromState() {
@@ -796,6 +806,7 @@ function grantPracticeParticipationIfAllowed() {
                 typeof merged.strandRotationSeq === "number" && merged.strandRotationSeq >= 0
                     ? Math.floor(merged.strandRotationSeq)
                     : 0,
+            audio: normalizeAudioSettings(merged.audio),
             displayName: name,
             lastSyncedAt: Date.now()
         }, { merge: true });
@@ -829,6 +840,7 @@ async function syncCurrentProfileToCloud() {
                 typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
                     ? Math.floor(state.strandRotationSeq)
                     : 0,
+            audio: normalizeAudioSettings(state.audio),
             displayName: name,
             lastSyncedAt: Date.now()
         }, { merge: true });
@@ -877,7 +889,8 @@ async function reconcileProfileWithCloud() {
         strandRotationSeq:
             typeof state.strandRotationSeq === "number" && state.strandRotationSeq >= 0
                 ? Math.floor(state.strandRotationSeq)
-                : 0
+                : 0,
+        audio: normalizeAudioSettings(state.audio)
     };
     const m1 = mergeProfileRecords(cloud, local);
     const merged = mergeProfileRecords(m1, session);
@@ -893,6 +906,8 @@ async function reconcileProfileWithCloud() {
             ? Math.floor(merged.strandRotationSeq)
             : 0;
     applyEngagementToState(merged.engagement);
+    state.audio = normalizeAudioSettings(merged.audio);
+    applyAudioFromState();
     processEngagementLoginSession();
     ensureBestiaryMatchesUnlockedLevels();
     syncShardsUi();
@@ -909,10 +924,12 @@ async function reconcileProfileWithCloud() {
         bestiary: state.bestiary,
         bossCacheByLevel: state.bossCacheByLevel,
         engagement: engagementSnapshotFromState(),
-        strandRotationSeq: state.strandRotationSeq
+        strandRotationSeq: state.strandRotationSeq,
+        audio: normalizeAudioSettings(state.audio)
     });
     const ls = document.getElementById("level-screen");
     if (ls && !ls.classList.contains("hidden")) {
+        syncMapAudioControlsFromState();
         renderLevelMenu();
         syncAiRouteNotice();
         syncMapQuestionBufferHint();
@@ -1100,6 +1117,8 @@ async function initFirebase() {
             ? Math.floor(merged.strandRotationSeq)
             : 0;
     applyEngagementToState(merged.engagement);
+    state.audio = normalizeAudioSettings(merged.audio);
+    applyAudioFromState();
     processEngagementLoginSession();
     ensureBestiaryMatchesUnlockedLevels();
     syncShardsUi();
@@ -1117,7 +1136,8 @@ async function initFirebase() {
             bestiary: state.bestiary,
             bossCacheByLevel: state.bossCacheByLevel,
             engagement: engagementSnapshotFromState(),
-            strandRotationSeq: state.strandRotationSeq
+            strandRotationSeq: state.strandRotationSeq,
+            audio: normalizeAudioSettings(state.audio)
         });
     } else {
         state.lastCloudSyncAt = Date.now();
@@ -1126,6 +1146,7 @@ async function initFirebase() {
      safeSet('welcome-player-text', name);
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('level-screen').classList.remove('hidden');
+    syncMapAudioControlsFromState();
     void startMapBgmFromUserGesture();
     renderPlayerSprite();
     renderLevelMenu();
@@ -2472,10 +2493,18 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
                 if (bS) bS.classList.add("animate-shake");
                 state.enemyHP = Math.max(0, state.enemyHP - dmg.enemy);
                 showDamage("enemy-damage", dmg.enemy);
+                const heroTier = Math.min(
+                    MAX_COSMETIC_TIER,
+                    Math.max(0, Math.floor(typeof state.cosmeticsTier === "number" ? state.cosmeticsTier : 0))
+                );
+                void playHeroSpellImpact(heroTier, { isCrit: dmg.isCrit === true });
             }
             if (dmg.player > 0) {
                 state.playerHP = Math.max(0, state.playerHP - dmg.player);
                 showDamage("player-damage", dmg.player);
+                const meta = getQuestNode(state.currentLevel);
+                const enemyKind = bossStrikeSoundIndex(state.currentLevel, meta.name, QUEST_ROUTE.length);
+                void playEnemyStrike(enemyKind);
             }
             updateHP();
         };
@@ -3139,6 +3168,7 @@ window.nextPracticeQuestion = async () => {
     closeAllMapHudOverlays();
     document.getElementById('battle-screen').classList.add('hidden');
     document.getElementById('level-screen').classList.remove('hidden');
+    syncMapAudioControlsFromState();
     void startMapBgmFromUserGesture();
     state.battlePinnedTopic = null;
     state.turnIndex = 0;
@@ -3238,6 +3268,63 @@ window.closeDetailedFeedback = async () => {
     syncCurrentProfileToCloud();
 };
  document.getElementById("cloud-sync-badge")?.addEventListener("click", () => requestUserSync());
+
+function syncMapAudioControlsFromState() {
+    const a = normalizeAudioSettings(state.audio);
+    const mSlider = document.getElementById("map-audio-music-slider");
+    const sSlider = document.getElementById("map-audio-sfx-slider");
+    const mBtn = document.getElementById("map-audio-music-mute");
+    const sBtn = document.getElementById("map-audio-sfx-mute");
+    if (mSlider) mSlider.value = String(Math.round(a.musicVolume * 100));
+    if (sSlider) sSlider.value = String(Math.round(a.sfxVolume * 100));
+    if (mBtn) {
+        mBtn.textContent = a.musicMuted ? "🔇" : "🔊";
+        mBtn.setAttribute("aria-pressed", a.musicMuted ? "true" : "false");
+        mBtn.setAttribute("aria-label", a.musicMuted ? "Unmute music" : "Mute music");
+    }
+    if (sBtn) {
+        sBtn.textContent = a.sfxMuted ? "🔇" : "🔊";
+        sBtn.setAttribute("aria-pressed", a.sfxMuted ? "true" : "false");
+        sBtn.setAttribute("aria-label", a.sfxMuted ? "Unmute sound effects" : "Mute sound effects");
+    }
+}
+
+function commitAudioSettingsPersist() {
+    if (state.playerName) saveLocalProfile(state.playerName);
+    void syncCurrentProfileToCloud();
+}
+
+function wireMapAudioControls() {
+    const mSlider = document.getElementById("map-audio-music-slider");
+    const sSlider = document.getElementById("map-audio-sfx-slider");
+    const mBtn = document.getElementById("map-audio-music-mute");
+    const sBtn = document.getElementById("map-audio-sfx-mute");
+    mSlider?.addEventListener("input", () => {
+        const v = Math.min(1, Math.max(0, parseInt(String(mSlider.value), 10) / 100));
+        patchAudioSettings({ musicVolume: v, musicMuted: false });
+        syncMapAudioControlsFromState();
+        commitAudioSettingsPersist();
+    });
+    sSlider?.addEventListener("input", () => {
+        const v = Math.min(1, Math.max(0, parseInt(String(sSlider.value), 10) / 100));
+        patchAudioSettings({ sfxVolume: v, sfxMuted: false });
+        syncMapAudioControlsFromState();
+        commitAudioSettingsPersist();
+    });
+    mBtn?.addEventListener("click", () => {
+        const cur = normalizeAudioSettings(state.audio);
+        patchAudioSettings({ musicMuted: !cur.musicMuted });
+        syncMapAudioControlsFromState();
+        commitAudioSettingsPersist();
+    });
+    sBtn?.addEventListener("click", () => {
+        const cur = normalizeAudioSettings(state.audio);
+        patchAudioSettings({ sfxMuted: !cur.sfxMuted });
+        syncMapAudioControlsFromState();
+        commitAudioSettingsPersist();
+    });
+}
+
 /** Map screen: wire HUD buttons here so clicks work without relying on inline handlers (CSP / scope). */
 function wireMapHudButtons() {
     document.getElementById("map-btn-bestiary")?.addEventListener("click", () => {
@@ -3254,7 +3341,9 @@ function wireMapHudButtons() {
     });
 }
 wireMapHudButtons();
+wireMapAudioControls();
 wireBgmVisibility();
+applyAudioFromState();
  loadRecentStems();
 state.bossCacheByLevel = loadBossCache();
 runRegressions();

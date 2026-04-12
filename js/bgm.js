@@ -11,6 +11,9 @@ let combatAudio;
 /** @type {"map" | "combat" | null} */
 let activeScene = null;
 
+const BASE_MAP_VOL = 0.38;
+const BASE_COMBAT_VOL = 0.34;
+
 function ensureAudio() {
     if (mapAudio) return;
     mapAudio = new Audio(MAP_SRC);
@@ -19,8 +22,18 @@ function ensureAudio() {
     combatAudio.loop = true;
     mapAudio.preload = "auto";
     combatAudio.preload = "auto";
-    mapAudio.volume = 0.38;
-    combatAudio.volume = 0.34;
+    mapAudio.volume = BASE_MAP_VOL;
+    combatAudio.volume = BASE_COMBAT_VOL;
+}
+
+/**
+ * @param {number} gain01 — effective music loudness 0..1 (mute + slider combined in caller)
+ */
+export function applyBgmUserSettings(gain01) {
+    ensureAudio();
+    const g = Math.min(1, Math.max(0, typeof gain01 === "number" ? gain01 : 1));
+    mapAudio.volume = BASE_MAP_VOL * g;
+    combatAudio.volume = BASE_COMBAT_VOL * g;
 }
 
 /**

@@ -117,6 +117,19 @@
                 <button type="button" id="map-btn-practice" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Practice (MCQ)</button>
                 <button type="button" id="map-btn-logout" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Logout</button>
             </div>
+            <div class="w-full flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-6 pb-2 border-b border-slate-800/50 bg-slate-950/80" id="map-audio-panel" aria-label="Volume and mute">
+                <span class="text-[10px] font-black uppercase tracking-wider text-slate-500 shrink-0">Audio</span>
+                <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1 sm:flex-initial">
+                    <span class="text-[10px] text-slate-400 shrink-0 w-8">Music</span>
+                    <button type="button" id="map-audio-music-mute" class="shrink-0 w-9 h-9 rounded-lg border border-slate-600 bg-slate-800 text-lg leading-none hover:bg-slate-700" aria-label="Mute music">🔊</button>
+                    <input type="range" id="map-audio-music-slider" min="0" max="100" value="100" class="flex-1 min-w-[96px] max-w-[220px] accent-indigo-400 h-2" aria-label="Music volume" />
+                </div>
+                <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1 sm:flex-initial">
+                    <span class="text-[10px] text-slate-400 shrink-0 w-8">SFX</span>
+                    <button type="button" id="map-audio-sfx-mute" class="shrink-0 w-9 h-9 rounded-lg border border-slate-600 bg-slate-800 text-lg leading-none hover:bg-slate-700" aria-label="Mute sound effects">🔊</button>
+                    <input type="range" id="map-audio-sfx-slider" min="0" max="100" value="100" class="flex-1 min-w-[96px] max-w-[220px] accent-indigo-400 h-2" aria-label="Sound effects volume" />
+                </div>
+            </div>
         </div>
         <div class="shrink-0 px-4 sm:px-6 pt-2 pb-4 text-center max-w-xl mx-auto w-full border-b border-slate-800/80 bg-slate-950/50">
             <h2 class="text-2xl sm:text-3xl font-black text-amber-200 tracking-tight drop-shadow-[0_0_12px_rgba(253,230,138,0.35)]">Math Quest</h2>
