@@ -20,6 +20,11 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Variables marked "Contains secret values" are scanned in build output; embedding them in
+  # runtime-config.js is intentional (browser-visible keys). Without this, builds can fail and the
+  # previous deploy (without this file) stays live → /runtime-config.js 404.
+  # https://docs.netlify.com/build/environment-variables/secrets-controller/#configure-secret-scanning
+  SECRETS_SCAN_OMIT_PATHS = "runtime-config.js"
 
 # Match local dev (serve-static serves runtime-config with no-store)
 [[headers]]
