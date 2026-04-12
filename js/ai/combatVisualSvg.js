@@ -10,7 +10,6 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 /** Default stroke/fill for schematic diagrams on dark backgrounds */
 const GOM_STROKE = "#e5e7eb";
 const GOM_FILL = "rgba(55, 65, 81, 0.55)";
-const GOM_LABEL = "#f3f4f6";
 const GOM_LINE_DIM = "#9ca3af";
 
 /**
@@ -58,9 +57,14 @@ export function renderGomSpecToSvgElement(spec) {
             const node = document.createElementNS(SVG_NS, "text");
             node.setAttribute("x", String(el.x));
             node.setAttribute("y", String(el.y));
-            node.setAttribute("fill", GOM_LABEL);
-            node.setAttribute("font-size", "6");
+            node.setAttribute("fill", "#60a5fa");
+            node.setAttribute("font-size", "8");
             node.setAttribute("text-anchor", "middle");
+            node.setAttribute("dominant-baseline", "middle");
+            node.setAttribute(
+                "style",
+                "paint-order: stroke fill; stroke: #111827; stroke-width: 2px; stroke-linejoin: round;"
+            );
             node.textContent = el.text;
             svg.appendChild(node);
         }

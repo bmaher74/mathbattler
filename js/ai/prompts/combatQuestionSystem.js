@@ -15,6 +15,7 @@ Output exactly ONE valid JSON object. No markdown code fences, no commentary. Do
   2) SOLUTION: Work toward a clean, verifiable answer (scratchpad may be messy).
   3) STORY MAPPING: Map quantities to the story; no contradictions with cash on hand or variable meanings.
   4) DRAFT: Only then write the player-facing stem so the text matches the mapping exactly.
+- **GEOMETRY PERIMETER RULE (composite shapes):** If the task is perimeter of a composite figure, your "_thought_process" MUST state explicitly that **perimeter is the outer boundary only** — e.g. "Perimeter is the outer boundary only. I will exclude the internal shared edge of [X cm]." List **exactly** which **outer** segments you add (with lengths) before you write any sum or formula. Do **not** sum every number named in the story (no double-counting shared internal edges, no adding "height" lines that are not part of the outer walk).
 - "ideal_explanation": The FINAL, polished explanation for the student. Maximum 4 sentences. NO internal monologue.
 - "criterion": Must be exactly this key name (values A, B, C, or D).
 - "visual_type", "visual_spec", and "plotly_spec": See ### 5 below.
@@ -49,8 +50,14 @@ The app renders diagrams in two ways. Pick exactly one when a visual helps; othe
   - { "type": "polygon", "points": "x1,y1 x2,y2 ..." }
   - { "type": "line", "x1", "y1", "x2", "y2" }
   - { "type": "label", "text", "x", "y" }
-- **Coordinates:** (0,0) is the **top-left** of the grid; **+x** is right; **+y** is **down** (SVG coordinates, not school Cartesian with y up). Scale so the figure fits the viewBox; place dimension labels just outside shapes.
-- Set "plotly_spec" to "" for gom. The client draws with light strokes on a dark background — you only supply geometry, not colors.
+- **Coordinates:** (0,0) is the **top-left** of the grid; **+x** is right; **+y** is **down** (SVG coordinates, not school Cartesian with y up). Scale so the figure fits the viewBox.
+- **LABEL OFFSETS (CRITICAL):** NEVER place "label" elements **inside** a filled shape or **on top of** a stroke (dimension text must sit in clear space). Use these **offsets from the edge you are labeling** (apply to the label anchor point x, y):
+  - **Top horizontal edge** (label above the line): **subtract 5** from the y that would center on that edge (smaller y moves the label upward on screen).
+  - **Bottom horizontal edge** (label below the line): **add 5** to y.
+  - **Left vertical edge** (label to the left of the line): **subtract 10** from x.
+  - **Right vertical edge** (label to the right of the line): **add 10** to x.
+  For slanted or internal guide lines, offset the label similarly (never x,y exactly on the line). JSON must be valid: **no // comments** inside the JSON.
+- Set "plotly_spec" to "" for gom. The client styles labels for contrast — you only supply positions and text.
 
 **B) Charts and data (Plotly — "plotly")** — bar charts, scatter, line plots, histograms, or any visual where **numeric traces and axes** are the right model (including Start/Change/End as bars, comparing categories, plotting table data).
 - Set "visual_type" to "plotly" and "plotly_spec" to a **single JSON string** (escape inner double quotes) containing a valid Plotly figure: at least one trace in "data" with numeric coordinates (e.g. bar or scatter). Do not put a raw object at "plotly_spec" — it must stringify into the outer JSON.

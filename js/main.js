@@ -991,10 +991,20 @@ function resolveLoginGate(kind) {
         no_config: "Playing on this device only — progress stays in this browser until online save is set up.",
         timeout: "Online save is slow or blocked — using progress stored on this device."
     };
-    safeSet("cloud-status-msg", msg[kind] || msg.timeout, "innerText");
+    const hideOkLineInProd = isProductionUi() && kind === "firebase_ok";
+    const line = hideOkLineInProd ? "" : msg[kind] || msg.timeout;
+    safeSet("cloud-status-msg", line, "innerText");
     const el = document.getElementById("cloud-status-msg");
-    if (el) el.className = "mt-4 text-[10px] font-mono text-center uppercase " + (kind === "firebase_ok" ? "text-emerald-400" : "text-amber-400/90");
-    safeSet("login-btn", "START ADVENTURE").disabled = false;
+    if (el) {
+        if (hideOkLineInProd) {
+            el.classList.add("hidden");
+        } else {
+            el.classList.remove("hidden");
+            el.className = "mt-4 text-[10px] font-mono text-center uppercase " + (kind === "firebase_ok" ? "text-emerald-400" : "text-amber-400/90");
+        }
+    }
+    const loginBtn = safeSet("login-btn", "START ADVENTURE");
+    if (loginBtn) loginBtn.disabled = false;
 }
  // --- REGRESSION MONITORING ---
 function setRegressionVaultSkipped() {
