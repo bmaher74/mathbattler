@@ -2333,19 +2333,26 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         }
     };
     const callModel = async (userContent) => {
-        let content = await fetchQuestionRaw(userContent);
-        let r = parseFinalizeCombat(content);
-        if (r.err) {
-            content = await fetchQuestionRaw(
-                userContent +
-                    "\n\nYour previous output failed validation. Output one corrected JSON object only.\n" +
-                    r.err +
-                    "\n\nReminder: include every required key — expected_answer, success_criteria, visual_type, visual_spec, plotly_spec, and the field must be named \"criterion\" (A/B/C/D), not criterion_letter."
+        const maxAttempts = 4;
+        let lastErr = "";
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const content = await fetchQuestionRaw(
+                attempt === 0
+                    ? userContent
+                    : userContent +
+                          "\n\nYour previous output failed validation. Output one corrected JSON object only.\n" +
+                          lastErr +
+                          "\n\nCRITICAL FIXES:\n" +
+                          '- Keep numbers consistent: Do NOT put any numbers in prose unless the SAME numbers also appear in the formal math (\\(...\\) or inline_math). Remove countdowns, ages, quantities, and "flavor numbers".\n' +
+                          '- If you mention a number in the story (including currency), it must appear in the equation/expressions exactly.\n' +
+                          '- Include every required key: expected_answer, success_criteria, ideal_explanation, visual_type, visual_spec, plotly_spec, type, criterion.\n' +
+                          '- The field must be named "criterion" (A/B/C/D), not criterion_letter.\n'
             );
-            r = parseFinalizeCombat(content);
+            const r = parseFinalizeCombat(content);
+            if (!r.err) return r.data;
+            lastErr = r.err;
         }
-        if (r.err) throw new Error(`Combat question validation: ${r.err}`);
-        return r.data;
+        throw new Error(`Combat question validation: ${lastErr || "unknown error"}`);
     };
      const recentSet = new Set((state.recentQuestionStems || []).slice(0, MAX_RECENT_STEMS));
     const isDup = (t) => {
