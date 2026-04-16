@@ -36,3 +36,15 @@
   for = "/runtime-config.js"
   [headers.values]
     Cache-Control = "no-store"
+
+# Some browsers probe /favicon.ico even when an icon is specified.
+[[redirects]]
+  from = "/favicon.ico"
+  to = "/favicon.svg"
+  status = 301
+
+# Prevent stale JS from keeping legacy DashScope-in-browser code alive after deploys.
+[[headers]]
+  for = "/js/main.js"
+  [headers.values]
+    Cache-Control = "no-store"
