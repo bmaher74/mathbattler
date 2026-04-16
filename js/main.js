@@ -1824,7 +1824,7 @@ function invalidateCombatQuestionPrefetch() {
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Minimum time the VS intro stays up (masks fast prefetches). */
-const VS_MIN_MS = 3500;
+const VS_MIN_MS = 1600;
 /** Minimum time the judge “charging” phase runs. */
 const JUDGE_MIN_MS = 3000;
 
@@ -1835,22 +1835,34 @@ const JUDGE_CHARGE_FLAVOR_LINES = [
 ];
 
 function runTypewriterText(el, text, msPerChar) {
-    if (!el) return Promise.resolve();
+    if (!el) return { promise: Promise.resolve(), cancel: () => {} };
     el.textContent = "";
     const chars = Array.from(text);
     let i = 0;
-    return new Promise((resolve) => {
+    let cancelled = false;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let tid = null;
+    const promise = new Promise((resolve) => {
         const tick = () => {
+            if (cancelled) {
+                resolve();
+                return;
+            }
             if (i >= chars.length) {
                 resolve();
                 return;
             }
             el.textContent += chars[i];
             i++;
-            setTimeout(tick, msPerChar);
+            tid = setTimeout(tick, msPerChar);
         };
         tick();
     });
+    const cancel = () => {
+        cancelled = true;
+        if (tid) clearTimeout(tid);
+    };
+    return { promise, cancel };
 }
 
 let judgeChargeFlavorTimer = null;
@@ -1938,11 +1950,15 @@ async function runVsEncounterThenLoadQuestion(qMeta) {
         updateQuestionSourceBadge(null);
     }
     try {
-        await Promise.all([loadQuestion(), delay(VS_MIN_MS), tw]);
+        // Keep the cinematic snappy: enforce a short minimum time, but don't block on the full typewriter.
+        await Promise.all([loadQuestion(), delay(VS_MIN_MS)]);
     } catch (e) {
         console.error("loadQuestion during VS encounter:", e);
         throw e;
     } finally {
+        try {
+            if (tw && typeof tw.cancel === "function") tw.cancel();
+        } catch (_) {}
         overlay.classList.add("vs-encounter--exit");
         await delay(520);
         overlay.classList.add("hidden");
