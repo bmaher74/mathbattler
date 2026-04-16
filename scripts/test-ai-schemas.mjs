@@ -140,9 +140,9 @@ describe("CombatQuestionSchema", () => {
             criterion: "a",
             text_blocks: [
                 { type: "prose", content: "Cost is $5. Solve " },
-                { type: "inline_math", latex: "x+1=2" }
+                { type: "inline_math", latex: "x+1=5" }
             ],
-            expected_answer: "1",
+            expected_answer: "4",
             success_criteria: "- ok",
             ideal_explanation: "Subtract.",
             visual_type: "none",
@@ -155,7 +155,7 @@ describe("CombatQuestionSchema", () => {
         const q = { ...r.data };
         finalizeCombatQuestion(q);
         assert.ok(String(q.text).includes("$5"));
-        assert.ok(String(q.text).includes("\\(x+1=2\\)"));
+        assert.ok(String(q.text).includes("\\(x+1=5\\)"));
     });
 
     it("rejects both text and text_blocks", () => {
