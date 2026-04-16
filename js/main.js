@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { callGenerateCombatQuestionWithBackoff, callGenerateCombatQuestion } from "./ai/gemini.js";
 
 import { ASSETS, BOSS_ASSETS } from "./assets.js";
@@ -209,7 +209,12 @@ function readConfigString(v) {
     const dsModel = readConfigString(typeof window !== "undefined" ? window.__dashscope_model : "") || "qwen-flash";
     return { dsModel };
 }
- let db, auth, currentUser, isFirebaseReady = false;
+let functionsApi = null;
+let callVaultHealthcheck = null;
+let callGetPlayerProfile = null;
+let callSetPlayerProfile = null;
+
+let auth, currentUser, isFirebaseReady = false;
 let loginGateResolved = false;
  function isPromptDebugEnabled() {
     try {
@@ -271,7 +276,7 @@ function logCombatQuestionLlmExchange(systemText, userText, assistantText) {
         l2.textContent = "Runs in background";
         return;
     }
-     if (!isFirebaseReady || !db) {
+     if (!isFirebaseReady || !callGetPlayerProfile || !callSetPlayerProfile) {
         icon.textContent = "💾";
         l1.textContent = "Local save";
         l2.textContent = state.lastCloudSyncAt ? `Saved ${formatSyncAge(state.lastCloudSyncAt)}` : "This browser only";
@@ -312,7 +317,7 @@ function requestUserSync() {
     updateCloudSyncBadge();
     void (async () => {
         try {
-            if (isFirebaseReady && db) {
+            if (isFirebaseReady && callGetPlayerProfile && callSetPlayerProfile) {
                 await reconcileProfileWithCloud();
             } else {
                 saveLocalProfile(state.playerName);
@@ -830,10 +835,12 @@ function grantPracticeParticipationIfAllowed() {
     return EP_SHARD_PRACTICE;
 }
  async function persistMergedProfileToCloud(name, merged) {
-    if (!isFirebaseReady || !db) return false;
+    if (!isFirebaseReady || !callSetPlayerProfile) return false;
     try {
-        const pRef = doc(db, "artifacts", appId, "public", "data", "playerProfiles", safeProfileDocId(name));
-        await setDoc(pRef, {
+        await callSetPlayerProfile({
+            appId,
+            profileId: safeProfileDocId(name),
+            payload: {
             unlockedLevels: merged.unlockedLevels,
             skillProfile: merged.skillProfile,
             shards: merged.shards ?? 0,
@@ -848,7 +855,8 @@ function grantPracticeParticipationIfAllowed() {
             audio: normalizeAudioSettings(merged.audio),
             displayName: name,
             lastSyncedAt: Date.now()
-        }, { merge: true });
+            }
+        });
         state.lastCloudSyncAt = Date.now();
         state.cloudSyncError = null;
         updateCloudSyncBadge();
@@ -862,12 +870,15 @@ function grantPracticeParticipationIfAllowed() {
 }
  /** Push current session state to Firestore (merge). Call after progress changes and on a timer. */
 async function syncCurrentProfileToCloud() {
-    if (!isFirebaseReady || !db || !state.playerName) return;
+    if (!isFirebaseReady || !callSetPlayerProfile || !state.playerName) return;
     const name = state.playerName;
     const sp = state.skillProfile != null ? state.skillProfile : normalizeSkillProfile(null);
     if (typeof state.unlockedLevels !== "number" || state.unlockedLevels < 1) return;
     try {
-        await setDoc(doc(db, "artifacts", appId, "public", "data", "playerProfiles", safeProfileDocId(name)), {
+        await callSetPlayerProfile({
+            appId,
+            profileId: safeProfileDocId(name),
+            payload: {
             unlockedLevels: state.unlockedLevels,
             skillProfile: sp,
             shards: typeof state.shards === "number" ? Math.max(0, Math.floor(state.shards)) : 0,
@@ -882,7 +893,8 @@ async function syncCurrentProfileToCloud() {
             audio: normalizeAudioSettings(state.audio),
             displayName: name,
             lastSyncedAt: Date.now()
-        }, { merge: true });
+            }
+        });
         state.lastCloudSyncAt = Date.now();
         state.cloudSyncError = null;
         updateCloudSyncBadge();
@@ -893,13 +905,19 @@ async function syncCurrentProfileToCloud() {
     }
 }
  async function fetchCloudProfileDoc(name, retries = 2) {
-    if (!isFirebaseReady || !db) return null;
+    if (!isFirebaseReady || !callGetPlayerProfile) return null;
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            const pRef = doc(db, "artifacts", appId, "public", "data", "playerProfiles", safeProfileDocId(name));
-            const snap = await getDoc(pRef);
-            return snap.exists() ? snap.data() : null;
+            const res = await callGetPlayerProfile({ appId, profileId: safeProfileDocId(name) });
+            const out = res && typeof res === "object" && "data" in res ? res.data : null;
+            if (out && typeof out === "object" && out.exists && out.data && typeof out.data === "object") {
+                return out.data;
+            }
+            if (out && typeof out === "object" && out.exists === false) return null;
+            // Backward-compat: some callable wrappers may return {exists,data} directly.
+            if (out && typeof out === "object" && ("unlockedLevels" in out || "skillProfile" in out)) return out;
+            return null;
         } catch (e) {
             lastErr = e;
             if (attempt < retries) await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
@@ -913,7 +931,7 @@ async function syncCurrentProfileToCloud() {
  * Use when Firebase connects late or tab becomes visible again.
  */
 async function reconcileProfileWithCloud() {
-    if (!isFirebaseReady || !db || !state.playerName) return;
+    if (!isFirebaseReady || !callGetPlayerProfile || !callSetPlayerProfile || !state.playerName) return;
     const name = state.playerName;
     const cloud = await fetchCloudProfileDoc(name, 1);
     const local = loadLocalProfile(name);
@@ -1077,28 +1095,30 @@ function setRegressionVaultSkipped() {
  async function connectFirebaseAndSeedRegression() {
     const app = initializeApp(JSON.parse(__firebase_config));
     auth = getAuth(app);
-    db = getFirestore(app);
+    functionsApi = getFunctions(app, "us-central1");
+    callVaultHealthcheck = httpsCallable(functionsApi, "vaultHealthcheck");
+    callGetPlayerProfile = httpsCallable(functionsApi, "getPlayerProfile");
+    callSetPlayerProfile = httpsCallable(functionsApi, "setPlayerProfile");
     await (typeof __initial_auth_token !== "undefined" ? signInWithCustomToken(auth, __initial_auth_token) : signInAnonymously(auth));
     currentUser = auth.currentUser;
-     const testRef = doc(db, "artifacts", appId, "public", "data", "healthcheck", "status");
-    await setDoc(testRef, { ts: Date.now() }, { merge: true });
+    await callVaultHealthcheck({ appId });
     isFirebaseReady = true;
     safeSet("t-vault", "VAULT: PASS");
     document.getElementById("t-vault").className = "text-green-400";
      try {
-        const brendanRef = doc(db, "artifacts", appId, "public", "data", "playerProfiles", "Student Brendan");
-        let bSnap = await getDoc(brendanRef);
-        if (!bSnap.exists()) {
-            await setDoc(brendanRef, { unlockedLevels: 1, skillProfile: { "Math": { attempts: 0, corrects: 0 } } });
-            bSnap = await getDoc(brendanRef);
+        const brendanId = "Student Brendan";
+        const got = await callGetPlayerProfile({ appId, profileId: brendanId });
+        const gd = got && got.data ? got.data : null;
+        const exists = gd && typeof gd === "object" ? !!gd.exists : false;
+        if (!exists) {
+            await callSetPlayerProfile({
+                appId,
+                profileId: brendanId,
+                payload: { unlockedLevels: 1, skillProfile: { Math: { attempts: 0, corrects: 0 } }, displayName: brendanId }
+            });
         }
-        if (bSnap.exists()) {
-            safeSet("t-brendan", "BRENDAN: PASS");
-            document.getElementById("t-brendan").className = "text-green-400";
-        } else {
-            safeSet("t-brendan", "BRENDAN: FAIL");
-            document.getElementById("t-brendan").className = "text-red-400 font-bold";
-        }
+        safeSet("t-brendan", "BRENDAN: PASS");
+        document.getElementById("t-brendan").className = "text-green-400";
     } catch (seedErr) {
         console.warn("Brendan seed handshake:", seedErr);
         safeSet("t-brendan", "BRENDAN: FAIL");
@@ -1152,7 +1172,7 @@ async function initFirebase() {
      state.bossCacheByLevel = loadBossCache();
     const localSnapshot = loadLocalProfile(name);
     const cloudRetries = localSnapshot ? 1 : 3;
-    const cloudSnapshot = isFirebaseReady && db ? await fetchCloudProfileDoc(name, cloudRetries) : null;
+    const cloudSnapshot = isFirebaseReady && callGetPlayerProfile ? await fetchCloudProfileDoc(name, cloudRetries) : null;
      const merged = mergeProfileRecords(cloudSnapshot, localSnapshot);
     state.unlockedLevels = merged.unlockedLevels;
     state.skillProfile = merged.skillProfile;
@@ -1178,7 +1198,7 @@ async function initFirebase() {
         sourcesMerged: "cloud (if any) + localStorage"
     });
     saveLocalProfile(name);
-     if (isFirebaseReady && db) {
+     if (isFirebaseReady && callSetPlayerProfile) {
         await persistMergedProfileToCloud(name, {
             ...merged,
             skillProfile: state.skillProfile,
