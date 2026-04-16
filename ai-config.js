@@ -1,11 +1,8 @@
 /**
- * AI keys for Math Battler (browser + validate-llm). See ai-config.sample.js.
- * Live questions use Alibaba DashScope only (Gemini / AI Studio is not wired in — unusable in HK).
- * Combat questions try response_format json_schema first, then json_object, then plain — if a model returns HTTP 400 on json_schema, the app retries automatically.
- * Do not commit real keys to a public repo.
+ * Optional overrides for legacy tooling (e.g. validate-llm). Combat MCQs do not use a browser-side
+ * DashScope key — they call the generateCombatQuestion HTTPS Callable after Firebase Auth.
+ * See ai-config.sample.js for field meanings.
  */
-// Defaults only. For local dev, prefer `/runtime-config.js` served by `npm run serve`,
-// which loads `.env` and exposes it as window.__dashscope_* values.
 if (typeof window !== "undefined") {
     if (typeof window.__dashscope_api_key === "undefined") window.__dashscope_api_key = "";
     if (typeof window.__dashscope_base_url === "undefined") window.__dashscope_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";

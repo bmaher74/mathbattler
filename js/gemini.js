@@ -1,3 +1,8 @@
-// Compatibility wrapper: keep `gemini.js` per the refactor plan,
-// but the project now centralizes DashScope LLM calls in `llm.js`.
+// Compatibility wrapper: secure combat LLM (`./ai/gemini.js`) + legacy `llm.js` re-exports.
+export {
+    callGenerateCombatQuestion,
+    callGenerateCombatQuestionWithBackoff,
+    callLlmProxy,
+    callLlmProxyWithBackoff
+} from "./ai/gemini.js";
 export * from "./llm.js";

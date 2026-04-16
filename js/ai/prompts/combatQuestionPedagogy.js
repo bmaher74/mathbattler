@@ -123,10 +123,13 @@ export function canonicalizeReportedTopic(raw) {
  * @param {() => number} rng returns uniform [0,1)
  */
 /**
- * Deterministic strand for the next battle (or map prefetch): exploration first (canonical order), then
- * lowest success ratio, else rotation slot. No per-battle RNG — see docs/TOPIC_ROTATION.md.
+ * Deterministic strand for the next battle (or map prefetch).
+ *
+ * Variety mix (no RNG so prefetch and battle start cannot disagree):
+ * - ~1/3 of battles (seq % 3 === 0): "weak bias" — under-sampled first, else lowest success ratio.
+ * - ~2/3 of battles: straight rotation slot for variety.
  */
-export function pickBattlePinnedTopic(skillProfile, strandRotationSeq) {
+function pickBattlePinnedTopicWeakBias(skillProfile, strandRotationSeq) {
     const sp = normalizeSkillProfile(skillProfile);
     ensureCanonicalSkillTopicsInPlace(sp);
     const seq =
@@ -146,6 +149,17 @@ export function pickBattlePinnedTopic(skillProfile, strandRotationSeq) {
         }
     }
     if (bestRatio < 2 - 1e-9) return best;
+    return CANONICAL_SKILL_TOPICS[seq % CANONICAL_SKILL_TOPICS.length];
+}
+
+export function pickBattlePinnedTopic(skillProfile, strandRotationSeq) {
+    const sp = normalizeSkillProfile(skillProfile);
+    ensureCanonicalSkillTopicsInPlace(sp);
+    const seq =
+        typeof strandRotationSeq === "number" && strandRotationSeq >= 0 ? Math.floor(strandRotationSeq) : 0;
+
+    // Deterministic 1/3 weak-focus, 2/3 variety.
+    if (seq % 3 === 0) return pickBattlePinnedTopicWeakBias(sp, seq);
     return CANONICAL_SKILL_TOPICS[seq % CANONICAL_SKILL_TOPICS.length];
 }
 
@@ -368,7 +382,7 @@ export function buildCombatQuestionUserPrompt(params) {
         topicPedagogyExplanation = `BATTLE PINNED: entire fight uses strand “${chosenTopic}”. Criterion A–D still advances each graded cast.`;
     } else {
         chosenTopic = pickBattlePinnedTopic(skillProfile, strandSeq);
-        topicPedagogyExplanation = `STRAND (prefetch / tools): “${chosenTopic}” from pickBattlePinnedTopic(skillProfile, strandRotationSeq) — exploration & weakness emphasis; strandRotationSeq advances only at battle start in the game.`;
+        topicPedagogyExplanation = `STRAND (prefetch / tools): “${chosenTopic}” from pickBattlePinnedTopic(skillProfile, strandRotationSeq) — deterministic mix: ~1/3 weak-focus, ~2/3 variety; strandRotationSeq advances only at battle start in the game.`;
     }
     const skillSnapshot = formatSkillSnapshotForPrompt(skillProfile);
     const nonce =

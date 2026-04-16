@@ -64,12 +64,12 @@ describe("canonicalizeReportedTopic", () => {
 });
 
 describe("pickBattlePinnedTopic", () => {
-    it("returns first under-sampled strand in canonical order", () => {
+    it("returns first under-sampled strand in canonical order on weak-focus turns (seq % 3 === 0)", () => {
         const topic = pickBattlePinnedTopic({}, 0);
         assert.equal(topic, "Algebra");
     });
 
-    it("picks strand with lowest success ratio when all have min samples", () => {
+    it("picks strand with lowest success ratio on weak-focus turns when all have min samples", () => {
         const profile = {};
         for (const t of CANONICAL_SKILL_TOPICS) {
             profile[t] = { attempts: SKILL_TOPIC_MIN_SAMPLES, corrects: SKILL_TOPIC_MIN_SAMPLES };
@@ -79,7 +79,7 @@ describe("pickBattlePinnedTopic", () => {
         assert.equal(topic, "Algebra");
     });
 
-    it("breaks equal success ratios by canonical order (first weakest slot)", () => {
+    it("breaks equal success ratios by canonical order (weak-focus turn)", () => {
         const profile = {};
         for (const t of CANONICAL_SKILL_TOPICS) {
             profile[t] = { attempts: 4, corrects: 4 };
@@ -93,6 +93,15 @@ describe("pickBattlePinnedTopic", () => {
             profile[t] = { attempts: 4, corrects: 4 };
         }
         assert.equal(pickBattlePinnedTopic(profile, -1), pickBattlePinnedTopic(profile, 0));
+    });
+
+    it("uses rotation slot on variety turns (seq % 3 !== 0)", () => {
+        const profile = {};
+        for (const t of CANONICAL_SKILL_TOPICS) {
+            profile[t] = { attempts: 10, corrects: 10 };
+        }
+        // seq=1 is a variety turn, so it should pick rotation slot 1.
+        assert.equal(pickBattlePinnedTopic(profile, 1), CANONICAL_SKILL_TOPICS[1]);
     });
 });
 
