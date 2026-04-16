@@ -2319,12 +2319,13 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     const questionBackoff = { min429DelayMs: 3500, maxDelayMs: 22000, initialDelayMs: 1000 };
     const fetchQuestionRaw = async (userContent) => {
         const messages = [systemMsg, { role: "user", content: userContent }];
-        // Qwen: lower temperature reduces repetitive "Wait…" reasoning loops; generous max_tokens avoids truncated JSON on math + _thought_process.
+        // Qwen: lower temperature reduces repetitive "Wait…" reasoning loops.
         const base = {
             model: dsModel,
             messages,
             temperature: 0.3,
-            max_tokens: 4096
+            // Keep responses bounded: long scratchpads can cause slow generations/timeouts.
+            max_tokens: 2200
         };
         const chain = [
             { ...base, response_format: combatQuestionJsonSchemaResponseFormat() },

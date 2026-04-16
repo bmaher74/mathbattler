@@ -65,6 +65,63 @@ function assertProseNumbersAppearInMath({ prose, math }) {
     }
 }
 
+function parseNumericAnswer(s) {
+    const t = String(s ?? "").trim();
+    if (!t) return null;
+    // Accept plain numeric answers like "38" or "38 cm" or "$38.00" (currency normalized elsewhere).
+    const m = t.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+    if (!m) return null;
+    const n = Number(m[0]);
+    return Number.isFinite(n) ? n : null;
+}
+
+function tryEvalSimpleArithmeticFromLatex(latex) {
+    const s0 = String(latex ?? "");
+    if (!s0.trim()) return null;
+    // Reject if it contains letters (variables, \pi, subscripts) — we only evaluate pure numeric arithmetic.
+    if (/[a-zA-Z]/.test(s0.replace(/\\times/g, "").replace(/\\cdot/g, ""))) return null;
+
+    let s = s0;
+    // Basic LaTeX to JS-ish arithmetic.
+    s = s.replace(/\\times|\\cdot/g, "*");
+    s = s.replace(/\s+/g, "");
+    // Convert simple \frac{a}{b} to (a)/(b)
+    s = s.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "($1)/($2)");
+    // Only allow digits, operators, parentheses, decimal points, and minus.
+    if (!/^[0-9+\-*/().]+$/.test(s)) return null;
+    try {
+        // eslint-disable-next-line no-new-func
+        const v = Function(`"use strict"; return (${s});`)();
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function assertInlineMathMatchesExpectedAnswerIfPureNumeric(q) {
+    const expected = parseNumericAnswer(q.expected_answer);
+    if (expected == null) return;
+
+    let math = "";
+    if (Array.isArray(q.text_blocks) && q.text_blocks.length > 0) {
+        math = q.text_blocks
+            .filter((b) => b && b.type === "inline_math")
+            .map((b) => String(b.latex ?? ""))
+            .join("\n");
+    } else {
+        math = extractMathSegmentsFromTextStem(q.text).math;
+    }
+    const v = tryEvalSimpleArithmeticFromLatex(math);
+    if (v == null) return;
+    // Tolerate tiny floating error.
+    if (Math.abs(v - expected) > 1e-9) {
+        throw new Error(
+            `Numeric consistency: expected_answer ${String(expected)} does not match computed value ${String(v)} from inline math`
+        );
+    }
+}
+
 /** Apply LaTeX/prose sanitization after Zod parse. Diagrams: visual_type + visual_spec (GOM) or plotly_spec. */
 export function finalizeCombatQuestion(q) {
     if (Array.isArray(q.text_blocks) && q.text_blocks.length > 0) {
@@ -112,6 +169,7 @@ export function finalizeCombatQuestion(q) {
             const seg = extractMathSegmentsFromTextStem(q.text);
             assertProseNumbersAppearInMath(seg);
         }
+        assertInlineMathMatchesExpectedAnswerIfPureNumeric(q);
     } catch (e) {
         // Bubble as a validation-style error so the caller triggers a regenerate.
         throw e;
