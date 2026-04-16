@@ -1,5 +1,35 @@
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
 .animate-shake { animation: shake 0.4s ease-in-out; }
+@keyframes shake-hard {
+    0%,
+    100% {
+        transform: translate(0, 0);
+    }
+    12% {
+        transform: translate(-16px, 4px);
+    }
+    24% {
+        transform: translate(16px, -3px);
+    }
+    36% {
+        transform: translate(-14px, -5px);
+    }
+    48% {
+        transform: translate(14px, 3px);
+    }
+    60% {
+        transform: translate(-11px, 0);
+    }
+    72% {
+        transform: translate(11px, -4px);
+    }
+    84% {
+        transform: translate(-7px, 2px);
+    }
+}
+.animate-shake-hard {
+    animation: shake-hard 0.58s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
 @keyframes attack-p { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-40px); } }
 .animate-attack-p { animation: attack-p 0.3s ease-in-out; }
 @keyframes attack-e { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(40px); } }
@@ -50,6 +80,14 @@
 #battle-impact-flash.battle-flash-on {
     opacity: 1 !important;
     background: radial-gradient(ellipse 90% 60% at 50% 36%, rgba(255, 251, 235, 0.72) 0%, rgba(251, 191, 36, 0.15) 35%, transparent 62%);
+}
+/* Stronger impact burst on spell connect */
+#battle-impact-flash.battle-flash-on.battle-flash-heavy {
+    background:
+        radial-gradient(ellipse 55% 45% at 50% 38%, rgba(255, 255, 255, 0.95) 0%, rgba(254, 240, 138, 0.55) 18%, transparent 52%),
+        radial-gradient(ellipse 100% 75% at 50% 34%, rgba(251, 191, 36, 0.5) 0%, rgba(249, 115, 22, 0.22) 28%, transparent 58%),
+        radial-gradient(ellipse 120% 90% at 50% 40%, rgba(147, 197, 253, 0.35) 0%, transparent 45%);
+    filter: brightness(1.08);
 }
 
 @keyframes damage-pop {
@@ -296,4 +334,474 @@
 }
 .mb-production-ui #engagement-toast {
     top: 0.5rem;
+}
+
+/* --- VS encounter (map → combat): full-screen intro --- */
+#vs-encounter-overlay:not(.hidden) {
+    display: flex;
+}
+.vs-encounter-flash-layer {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    opacity: 0;
+    z-index: 1;
+}
+#vs-encounter-overlay.vs-encounter--flash .vs-encounter-flash-layer {
+    animation: vs-flash-pop 0.38s ease-out forwards;
+}
+@keyframes vs-flash-pop {
+    0% {
+        opacity: 0.92;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+.vs-encounter-stage {
+    position: relative;
+    z-index: 2;
+}
+/* Portraits: as large as fits two-up on the viewport (square tiles). */
+.vs-portrait {
+    flex: 1 1 0;
+    min-width: 0;
+    width: min(56vmin, calc(50vw - 1.25rem), 30rem);
+    height: min(56vmin, calc(50vw - 1.25rem), 30rem);
+    max-height: min(56vmin, calc(55dvh - 5.5rem), 34rem);
+    opacity: 0;
+    transform: translateX(0);
+}
+.vs-portrait svg {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    object-fit: contain;
+}
+#vs-encounter-overlay.vs-encounter--portraits-in .vs-portrait--hero {
+    animation: vs-slide-in-left 0.52s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+#vs-encounter-overlay.vs-encounter--portraits-in .vs-portrait--boss {
+    animation: vs-slide-in-right 0.52s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes vs-slide-in-left {
+    from {
+        transform: translateX(-130%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+@keyframes vs-slide-in-right {
+    from {
+        transform: translateX(130%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+.vs-encounter-vs-pill {
+    position: absolute;
+    top: 40%;
+    left: 50%;
+    z-index: 3;
+    transform: translate(-50%, -50%) scale(0);
+    font-size: clamp(2.25rem, 9vw, 3.75rem);
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 0.06em;
+    color: rgba(251, 191, 36, 0.98);
+    text-shadow:
+        0 0 20px rgba(251, 191, 36, 0.65),
+        0 2px 0 rgba(0, 0, 0, 0.85);
+    opacity: 0;
+}
+#vs-encounter-overlay.vs-encounter--portraits-in .vs-encounter-vs-pill {
+    animation: vs-pill-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) 0.18s forwards;
+}
+@keyframes vs-pill-pop {
+    from {
+        transform: translate(-50%, -50%) scale(0);
+        opacity: 0;
+    }
+    to {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+}
+.vs-taunt-text {
+    position: relative;
+    z-index: 2;
+    font-size: clamp(0.8rem, 3vw, 1.1rem);
+    line-height: 1.4;
+    text-shadow:
+        0 2px 14px rgba(0, 0, 0, 0.95),
+        0 0 24px rgba(30, 58, 138, 0.45);
+}
+#vs-encounter-overlay.vs-encounter--exit {
+    animation: vs-overlay-exit 0.52s ease-out forwards;
+}
+@keyframes vs-overlay-exit {
+    to {
+        opacity: 0;
+        filter: blur(3px);
+    }
+}
+
+/* Judge phase: hide math UI; full-arena duel loop while API runs */
+#interaction-panel.interaction-panel--charging {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+}
+#battle-arena {
+    position: relative;
+}
+#battle-arena.judge-duel-active::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    background: radial-gradient(ellipse 70% 60% at 50% 44%, rgba(99, 102, 241, 0.42) 0%, transparent 52%),
+        radial-gradient(ellipse 50% 48% at 28% 52%, rgba(56, 189, 248, 0.35) 0%, transparent 48%),
+        radial-gradient(ellipse 50% 48% at 72% 52%, rgba(248, 113, 113, 0.38) 0%, transparent 48%),
+        radial-gradient(circle at 50% 48%, rgba(250, 250, 250, 0.08) 0%, transparent 35%);
+    animation: judge-duel-arena-pulse 0.85s ease-in-out infinite;
+}
+@keyframes judge-duel-arena-pulse {
+    0%,
+    100% {
+        opacity: 0.75;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.04);
+    }
+}
+#battle-arena.judge-duel-active::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        -12deg,
+        transparent,
+        transparent 10px,
+        rgba(255, 255, 255, 0.02) 10px,
+        rgba(255, 255, 255, 0.02) 11px
+    );
+    opacity: 0.35;
+    animation: judge-duel-scan 2.4s linear infinite;
+    mix-blend-mode: overlay;
+}
+@keyframes judge-duel-scan {
+    from {
+        transform: translateY(-6px);
+    }
+    to {
+        transform: translateY(6px);
+    }
+}
+#player-sprite.combat-hero-charging {
+    position: relative;
+    z-index: 8;
+    animation:
+        judge-hero-charge-bob 0.52s ease-in-out infinite alternate,
+        judge-hero-charge-glow 0.68s ease-in-out infinite alternate;
+}
+@keyframes judge-hero-charge-bob {
+    0% {
+        transform: translateY(0) scale(1);
+    }
+    100% {
+        transform: translateY(-10px) scale(1.07);
+    }
+}
+@keyframes judge-hero-charge-glow {
+    0% {
+        filter: brightness(1) drop-shadow(0 0 14px rgba(56, 189, 248, 0.65));
+    }
+    100% {
+        filter: brightness(1.2) drop-shadow(0 0 32px rgba(129, 140, 248, 1)) drop-shadow(0 0 8px rgba(250, 250, 250, 0.35));
+    }
+}
+#enemy-sprite.combat-enemy-charging {
+    position: relative;
+    z-index: 8;
+    animation: judge-enemy-charge-tense 0.58s ease-in-out infinite alternate;
+}
+@keyframes judge-enemy-charge-tense {
+    0% {
+        transform: translateX(0) scale(1) rotate(0deg);
+        filter: brightness(1) drop-shadow(0 0 8px rgba(248, 113, 113, 0.35));
+    }
+    100% {
+        transform: translateX(-6px) scale(1.05) rotate(-1.5deg);
+        filter: brightness(1.1) drop-shadow(0 0 22px rgba(248, 113, 113, 0.65));
+    }
+}
+
+/* Crossing spell bolts while judge API runs */
+.judge-duel-projectiles {
+    position: absolute;
+    inset: 0;
+    z-index: 14;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    overflow: hidden;
+}
+#battle-arena.judge-duel-active .judge-duel-projectiles {
+    opacity: 1;
+    visibility: visible;
+}
+.judge-bolt-layer {
+    position: absolute;
+    inset: 0;
+}
+.judge-bolt {
+    position: absolute;
+    width: 7px;
+    height: 22px;
+    border-radius: 40%;
+    transform-origin: center bottom;
+    will-change: transform, opacity;
+}
+.judge-bolt--hero {
+    bottom: 11%;
+    background: linear-gradient(to top, rgba(14, 165, 233, 0.15), #38bdf8 35%, #e0f2fe 90%, #fff);
+    box-shadow:
+        0 0 10px #0ea5e9,
+        0 0 22px rgba(56, 189, 248, 0.85),
+        0 -28px 16px rgba(125, 211, 252, 0.35);
+    animation: judge-bolt-hero-up 0.38s linear infinite;
+}
+.judge-bolt--enemy {
+    top: 9%;
+    height: 24px;
+    transform-origin: center top;
+    background: linear-gradient(to bottom, rgba(248, 113, 113, 0.2), #f87171 40%, #7f1d1d 95%);
+    box-shadow:
+        0 0 10px #ef4444,
+        0 0 24px rgba(248, 113, 113, 0.9),
+        0 32px 18px rgba(254, 202, 202, 0.35);
+    animation: judge-bolt-enemy-down 0.36s linear infinite;
+}
+@keyframes judge-bolt-hero-up {
+    0% {
+        transform: translateX(-50%) translateY(0) scaleY(0.35);
+        opacity: 0;
+    }
+    12% {
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(-50%) translateY(calc(-1 * min(52vh, 420px))) scaleY(1.35) scaleX(1.15);
+        opacity: 0.92;
+    }
+}
+@keyframes judge-bolt-enemy-down {
+    0% {
+        transform: translateX(-50%) translateY(0) scaleY(0.35);
+        opacity: 0;
+    }
+    12% {
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(-50%) translateY(min(52vh, 420px)) scaleY(1.4) scaleX(1.12);
+        opacity: 0.9;
+    }
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(1) {
+    left: 22%;
+    animation-delay: 0s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(2) {
+    left: 31%;
+    animation-delay: 0.09s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(3) {
+    left: 40%;
+    animation-delay: 0.18s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(4) {
+    left: 50%;
+    animation-delay: 0.05s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(5) {
+    left: 60%;
+    animation-delay: 0.14s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(6) {
+    left: 69%;
+    animation-delay: 0.22s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(7) {
+    left: 78%;
+    animation-delay: 0.11s;
+}
+.judge-bolt-layer--hero .judge-bolt:nth-child(8) {
+    left: 53%;
+    animation-delay: 0.28s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(1) {
+    left: 24%;
+    animation-delay: 0.04s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(2) {
+    left: 33%;
+    animation-delay: 0.13s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(3) {
+    left: 42%;
+    animation-delay: 0.21s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(4) {
+    left: 51%;
+    animation-delay: 0.07s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(5) {
+    left: 59%;
+    animation-delay: 0.16s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(6) {
+    left: 67%;
+    animation-delay: 0.25s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(7) {
+    left: 76%;
+    animation-delay: 0.1s;
+}
+.judge-bolt-layer--enemy .judge-bolt:nth-child(8) {
+    left: 48%;
+    animation-delay: 0.19s;
+}
+.judge-spark-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+}
+.judge-spark {
+    position: absolute;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    left: 50%;
+    top: 44%;
+    background: #fef08a;
+    box-shadow: 0 0 8px #facc15, 0 0 16px #f59e0b;
+    opacity: 0;
+    animation: judge-spark-pop 0.55s ease-out infinite;
+}
+.judge-spark:nth-child(1) {
+    left: 38%;
+    top: 42%;
+    animation-delay: 0s;
+}
+.judge-spark:nth-child(2) {
+    left: 58%;
+    top: 46%;
+    animation-delay: 0.12s;
+    background: #7dd3fc;
+    box-shadow: 0 0 8px #38bdf8;
+}
+.judge-spark:nth-child(3) {
+    left: 47%;
+    top: 50%;
+    animation-delay: 0.24s;
+}
+.judge-spark:nth-child(4) {
+    left: 62%;
+    top: 41%;
+    animation-delay: 0.08s;
+    background: #fca5a5;
+    box-shadow: 0 0 8px #f87171;
+}
+.judge-spark:nth-child(5) {
+    left: 35%;
+    top: 48%;
+    animation-delay: 0.32s;
+}
+.judge-spark:nth-child(6) {
+    left: 52%;
+    top: 44%;
+    animation-delay: 0.4s;
+    background: #c4b5fd;
+    box-shadow: 0 0 8px #a78bfa;
+}
+@keyframes judge-spark-pop {
+    0% {
+        transform: scale(0) translate(0, 0);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+        transform: scale(1.4) translate(0, 0);
+    }
+    100% {
+        transform: scale(0.2) translate(var(--jx, 18px), var(--jy, -14px));
+        opacity: 0;
+    }
+}
+.judge-spark:nth-child(odd) {
+    --jx: -22px;
+    --jy: 12px;
+}
+.judge-spark:nth-child(even) {
+    --jx: 20px;
+    --jy: -16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #vs-encounter-overlay.vs-encounter--flash .vs-encounter-flash-layer {
+        animation: none;
+        opacity: 0;
+    }
+    #vs-encounter-overlay.vs-encounter--portraits-in .vs-portrait--hero,
+    #vs-encounter-overlay.vs-encounter--portraits-in .vs-portrait--boss,
+    #vs-encounter-overlay.vs-encounter--portraits-in .vs-encounter-vs-pill {
+        animation-duration: 0.01ms;
+        animation-iteration-count: 1;
+        opacity: 1;
+        transform: none;
+    }
+    #vs-encounter-overlay.vs-encounter--portraits-in .vs-portrait--hero {
+        transform: none;
+    }
+    #vs-encounter-overlay.vs-encounter--portraits-in .vs-portrait--boss {
+        transform: none;
+    }
+    #vs-encounter-overlay.vs-encounter--exit {
+        animation: none;
+        opacity: 0;
+    }
+    #battle-arena.judge-duel-active::before,
+    #battle-arena.judge-duel-active::after {
+        animation: none !important;
+        opacity: 0.4;
+        transform: none;
+    }
+    #player-sprite.combat-hero-charging {
+        animation: none;
+        filter: drop-shadow(0 0 14px rgba(129, 140, 248, 0.75));
+        transform: none;
+    }
+    #enemy-sprite.combat-enemy-charging {
+        animation: none;
+        filter: drop-shadow(0 0 12px rgba(248, 113, 113, 0.45));
+        transform: none;
+    }
+    #battle-arena.judge-duel-active .judge-duel-projectiles {
+        display: none;
+    }
 }

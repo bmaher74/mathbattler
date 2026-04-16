@@ -1,6 +1,6 @@
 /**
  * Shared runtime-config.js body for local dev (serve-static) and Netlify build (generate-runtime-config).
- * Reads DASHSCOPE_* and FIREBASE_* from the provided env object (defaults to process.env).
+ * Reads FIREBASE_* from the provided env object (defaults to process.env).
  */
 
 export function jsStringLiteral(s) {
@@ -20,11 +20,6 @@ export function productionUiFromEnv(env) {
  * @param {{ bannerLines?: string[] }} [opts]
  */
 export function runtimeConfigJs(env = process.env, opts = {}) {
-    const dsKey = env.DASHSCOPE_API_KEY || "";
-    const dsBase = env.DASHSCOPE_BASE_URL || "";
-    const dsModel = env.DASHSCOPE_MODEL || "";
-    const dsChatUrl = env.DASHSCOPE_CHAT_COMPLETIONS_URL || "";
-
     const fbJson = env.FIREBASE_CONFIG_JSON || "";
     const fbApiKey = env.FIREBASE_API_KEY || "";
     const fbAuthDomain = env.FIREBASE_AUTH_DOMAIN || "";
@@ -42,10 +37,7 @@ export function runtimeConfigJs(env = process.env, opts = {}) {
     return (
         `${banner}` +
         `(function(){\n` +
-        `  window.__dashscope_api_key = ${jsStringLiteral(dsKey)};\n` +
-        `  if (${jsStringLiteral(dsBase)}.trim()) window.__dashscope_base_url = ${jsStringLiteral(dsBase)};\n` +
-        `  if (${jsStringLiteral(dsModel)}.trim()) window.__dashscope_model = ${jsStringLiteral(dsModel)};\n` +
-        `  if (${jsStringLiteral(dsChatUrl)}.trim()) window.__dashscope_chat_completions_url = ${jsStringLiteral(dsChatUrl)};\n` +
+        `  // DashScope API keys are not injected here — combat LLM calls go through generateCombatQuestion (HTTPS Callable).\n` +
         `\n` +
         `  // Firebase config must be a JSON string in window.__firebase_config.\n` +
         `  var fbJson = ${jsStringLiteral(fbJson)};\n` +

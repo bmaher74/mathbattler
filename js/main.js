@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { callGenerateCombatQuestionWithBackoff, callGenerateCombatQuestion } from "./ai/gemini.js";
 
 import { ASSETS, BOSS_ASSETS } from "./assets.js";
 import {
@@ -13,7 +14,16 @@ import {
 } from "./cosmeticEvolution.js";
 import { pickEnemyTaunt } from "./enemyTaunts.js";
 import { startMapBgmFromUserGesture, startCombatBgmFromUserGesture, wireBgmVisibility } from "./bgm.js";
-import { playHeroSpellImpact, playEnemyStrike, bossStrikeSoundIndex } from "./combatSfx.js";
+import {
+    playHeroSpellImpact,
+    playEnemyStrike,
+    bossStrikeSoundIndex,
+    playVsEncounterSwoosh,
+    playVsPortraitThud,
+    playMagicChargeUp,
+    playJudgeSpellFizzle,
+    resumeCombatSfxContext
+} from "./combatSfx.js";
 import {
     mergeProfileAudio,
     applyAudioFromState,
@@ -194,19 +204,10 @@ function readConfigString(v) {
     const s = typeof v === "string" ? v : String(v);
     return s.trim();
 }
+ /** Model id for prompts (default qwen-flash). The API key lives only on the server callable. */
  function getConfiguredAiKeys() {
-    const dsKey = readConfigString(typeof window !== "undefined" ? window.__dashscope_api_key : "");
-    const dsBase =
-        readConfigString(typeof window !== "undefined" ? window.__dashscope_base_url : "") ||
-        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
     const dsModel = readConfigString(typeof window !== "undefined" ? window.__dashscope_model : "") || "qwen-flash";
-    const dsChatUrl = readConfigString(typeof window !== "undefined" ? window.__dashscope_chat_completions_url : "");
-    return { dsKey, dsBase, dsModel, dsChatUrl };
-}
- function dashscopeChatCompletionsUrl() {
-    const { dsBase, dsChatUrl } = getConfiguredAiKeys();
-    if (dsChatUrl) return dsChatUrl;
-    return dsBase.replace(/\/$/, "") + "/chat/completions";
+    return { dsModel };
 }
  let db, auth, currentUser, isFirebaseReady = false;
 let loginGateResolved = false;
@@ -1399,10 +1400,8 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
     const q = state.activeQuestion || {};
     const meta = getQuestNode(state.currentLevel) || {};
     try {
-        const { dsKey, dsModel } = getConfiguredAiKeys();
-        if (!dsKey) throw new Error("no DashScope API key configured");
-        const url = dashscopeChatCompletionsUrl();
-        const headers = { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` };
+        if (!canUseSecureAiBridge()) throw new Error("Secure AI bridge unavailable (Firebase Auth required)");
+        const { dsModel } = getConfiguredAiKeys();
         const systemMsg = {
             role: "system",
             content:
@@ -1419,19 +1418,16 @@ window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classL
             `Return JSON keys:\n- hint: string (3-6 short sentences max; tactical tone; include an equation if helpful). ` +
             `Math only as \\(...\\) inline TeX (no single-dollar math delimiters; no $$, no tables, no # or **).\n`;
         debugLogAiPrompt("dashscope.scan", user);
-        const body = JSON.stringify({
-            model: dsModel,
-            messages: [systemMsg, { role: "user", content: user }],
-            response_format: { type: "json_object" },
-            temperature: 0.6,
-            max_tokens: 260
-        });
-        const res = await fetchWithBackoff(url, { method: "POST", headers, body }, 3, {
-            min429DelayMs: 3500,
-            maxDelayMs: 20000,
-            initialDelayMs: 900
-        });
-        const data = await res.json();
+        const data = await callGenerateCombatQuestionWithBackoff(
+            {
+                model: dsModel,
+                messages: [systemMsg, { role: "user", content: user }],
+                response_format: { type: "json_object" },
+                temperature: 0.6,
+                max_tokens: 260
+            },
+            { min429DelayMs: 3500, maxDelayMs: 20000, initialDelayMs: 900 }
+        );
         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
         const content = data?.choices?.[0]?.message?.content;
         const hintPv = parseAndValidate(ScanHintSchema, content, { lenient: true });
@@ -1456,6 +1452,18 @@ let prefetchInFlightCount = 0;
 let prefetchInFlight = false;
 /** Prevents concurrent loadQuestion runs from sharing one prefetch completion — only the first dequeue would get `nextQuestion`, the rest saw null and fell back to offline. */
 let loadQuestionInFlight = null;
+
+function invalidateCombatQuestionPrefetch() {
+    // Cancels late writes from in-flight prefetch and drops any buffered question built under a stale battle pin.
+    prefetchRunId += 1;
+    fetchPromise = null;
+    prefetchPromiseForLevel = null;
+    state.nextQuestion = null;
+    try {
+        syncMapQuestionBufferHint();
+        syncQuestionsApiBadge();
+    } catch (_) {}
+}
  function clearPrefetchFailureUi() {
     state.aiOfflineHint = null;
     state.lastPrefetchError = null;
@@ -1472,20 +1480,18 @@ let loadQuestionInFlight = null;
     if (is429) {
         state.aiOfflineHint =
             "Live AI returned HTTP 429 (too many requests). Using the offline question pool. Technical detail: " + err;
-    } else if (/no AI API key|no DashScope API key/i.test(err)) {
+    } else if (/Secure AI bridge unavailable|Firebase Auth required|unauthenticated/i.test(err)) {
         state.aiOfflineHint =
-            "No DashScope API key — set DASHSCOPE_API_KEY for the Netlify build (or __dashscope_api_key in ai-config.js locally). Using the offline pool.";
+            "Live AI needs Firebase (anonymous sign-in is fine). Using the offline pool until the cloud session is ready. " +
+            err;
     } else if (/PREFETCH_TIMEOUT|did not finish within|Live AI slow or stalled/i.test(err)) {
         state.aiOfflineHint =
             "Live AI hit the time limit before the question was ready (large prompt, slow API, or multiple retries in one run). Using the offline pool. Allow more time: ?aiTimeoutMs=90000 or window.__prefetch_ai_timeout_ms = 90000.";
     } else if (/HTTP 404|wrong endpoint|chat completions/i.test(err)) {
-        state.aiOfflineHint =
-            "Live AI returned 404 — the chat URL is wrong. Default base is https://dashscope-intl.aliyuncs.com/compatible-mode/v1 plus /chat/completions, or set window.__dashscope_chat_completions_url to the full POST URL. " +
-            err;
+        state.aiOfflineHint = "Live AI proxy failed (404 or bad route). Check Cloud Function deploy and region. " + err;
     } else if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(err)) {
         state.aiOfflineHint =
-            err +
-            " If you use Alibaba DashScope from a static web page, the API often blocks browser CORS — use a small same-origin proxy and set window.__dashscope_chat_completions_url to your proxy URL.";
+            err + " Check Firebase callable CORS / Cloud Run invoker (public) and that you are signed in.";
     } else {
         state.aiOfflineHint = "Live AI request failed — using the offline question pool. " + err;
     }
@@ -1573,9 +1579,9 @@ let loadQuestionInFlight = null;
     const root = document.getElementById("ai-questions-status");
     const l2 = document.getElementById("ai-status-line2");
     if (!root || !l2) return;
-     const { dsKey, dsModel } = getConfiguredAiKeys();
-    const hasKey = !!dsKey;
-    const routeTitle = dsKey ? `DashScope: ${dsModel}` : "";
+     const { dsModel } = getConfiguredAiKeys();
+    const liveAiAvailable = canUseSecureAiBridge();
+    const routeTitle = liveAiAvailable ? `DashScope: ${dsModel}` : "";
      const isLiveSource = (q) =>
         q && (q._questionSource === "dashscope" || q._questionSource === "openrouter" || q._questionSource === "gemini");
     const queuedLive = isLiveSource(state.nextQuestion);
@@ -1623,7 +1629,7 @@ let loadQuestionInFlight = null;
         if (prefetchInFlight) {
             setStyle("border-sky-500/70 bg-slate-900/95", "text-sky-300");
             l2.textContent = "Fetching from API…";
-            root.title = hasKey ? `Request in progress (${routeTitle})` : "";
+            root.title = liveAiAvailable ? `Request in progress (${routeTitle})` : "";
             return;
         }
         if (queuedLive || activeLive) {
@@ -1633,10 +1639,10 @@ let loadQuestionInFlight = null;
             root.title = m ? `${routeTitle} (queued model: ${m})` : routeTitle;
             return;
         }
-        if (!hasKey) {
+        if (!liveAiAvailable) {
             setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
-            l2.textContent = "Offline only (no key)";
-            root.title = "Add DASHSCOPE_API_KEY (Netlify build) or ai-config.js (local) for live questions.";
+            l2.textContent = "Offline only (no Firebase session)";
+            root.title = "Live combat questions require Firebase (anonymous sign-in). No DashScope key in the browser.";
             return;
         }
         if (state.aiOfflineHint) {
@@ -1650,10 +1656,12 @@ let loadQuestionInFlight = null;
         root.title = lastAiConnectivityCheck.detail || routeTitle;
         return;
     }
-     if (!hasKey) {
+     if (!liveAiAvailable) {
         setStyle("border-slate-600/90 bg-slate-900/95", "text-slate-400");
-        l2.textContent = "No API key";
-        root.title = lastAiConnectivityCheck.detail || "Configure DASHSCOPE_API_KEY (Netlify) or ai-config.js";
+        l2.textContent = "No live AI session";
+        root.title =
+            lastAiConnectivityCheck.detail ||
+            "Open the game with Firebase configured; combat uses the secure Cloud Function (no browser API key).";
         return;
     }
     if (lastAiConnectivityCheck.ok === true) {
@@ -1753,14 +1761,20 @@ let loadQuestionInFlight = null;
         g.addEventListener("click", () => {
             if (lv <= state.unlockedLevels) {
                 void prefetchQuestion(lv, { criterionTurnIndex: 0 });
-                startGame(lv);
+                void (async () => {
+                    await resumeCombatSfxContext();
+                    await startGame(lv);
+                })();
             }
         });
         g.addEventListener("keydown", (e) => {
             if ((e.key === "Enter" || e.key === " ") && lv <= state.unlockedLevels) {
                 e.preventDefault();
                 void prefetchQuestion(lv, { criterionTurnIndex: 0 });
-                startGame(lv);
+                void (async () => {
+                    await resumeCombatSfxContext();
+                    await startGame(lv);
+                })();
             }
         });
         if (lv <= state.unlockedLevels) {
@@ -1788,6 +1802,141 @@ let loadQuestionInFlight = null;
         }
     });
 }
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Minimum time the VS intro stays up (masks fast prefetches). */
+const VS_MIN_MS = 3500;
+/** Minimum time the judge “charging” phase runs. */
+const JUDGE_MIN_MS = 3000;
+
+const JUDGE_CHARGE_FLAVOR_LINES = [
+    "Focusing logic…",
+    "Formulating proof…",
+    "Channeling algebraic power…"
+];
+
+function runTypewriterText(el, text, msPerChar) {
+    if (!el) return Promise.resolve();
+    el.textContent = "";
+    const chars = Array.from(text);
+    let i = 0;
+    return new Promise((resolve) => {
+        const tick = () => {
+            if (i >= chars.length) {
+                resolve();
+                return;
+            }
+            el.textContent += chars[i];
+            i++;
+            setTimeout(tick, msPerChar);
+        };
+        tick();
+    });
+}
+
+let judgeChargeFlavorTimer = null;
+function clearJudgeChargingUi() {
+    if (judgeChargeFlavorTimer != null) {
+        clearInterval(judgeChargeFlavorTimer);
+        judgeChargeFlavorTimer = null;
+    }
+    document.getElementById("interaction-panel")?.classList.remove("interaction-panel--charging");
+    document.getElementById("battle-arena")?.classList.remove("judge-duel-active");
+    const jo = document.getElementById("judge-charging-overlay");
+    if (jo) {
+        jo.classList.add("hidden");
+        jo.setAttribute("aria-hidden", "true");
+    }
+    const jf = document.getElementById("judge-charging-flavor");
+    if (jf) jf.textContent = "";
+    document.getElementById("player-sprite")?.classList.remove("combat-hero-charging");
+    document.getElementById("enemy-sprite")?.classList.remove("combat-enemy-charging");
+}
+
+async function startJudgeChargingUi() {
+    await resumeCombatSfxContext();
+    const panel = document.getElementById("interaction-panel");
+    const jo = document.getElementById("judge-charging-overlay");
+    const jf = document.getElementById("judge-charging-flavor");
+    const ps = document.getElementById("player-sprite");
+    const es = document.getElementById("enemy-sprite");
+    const arena = document.getElementById("battle-arena");
+    panel?.classList.add("interaction-panel--charging");
+    arena?.classList.add("judge-duel-active");
+    if (jo) {
+        jo.classList.remove("hidden");
+        jo.setAttribute("aria-hidden", "false");
+    }
+    if (jf) jf.textContent = JUDGE_CHARGE_FLAVOR_LINES[0];
+    let fi = 0;
+    judgeChargeFlavorTimer = setInterval(() => {
+        fi = (fi + 1) % JUDGE_CHARGE_FLAVOR_LINES.length;
+        if (jf) jf.textContent = JUDGE_CHARGE_FLAVOR_LINES[fi];
+    }, 900);
+    ps?.classList.add("combat-hero-charging");
+    es?.classList.add("combat-enemy-charging");
+    void playMagicChargeUp(JUDGE_MIN_MS / 1000);
+}
+
+async function runVsEncounterThenLoadQuestion(qMeta) {
+    await resumeCombatSfxContext();
+    const overlay = document.getElementById("vs-encounter-overlay");
+    const heroSlot = document.getElementById("vs-portrait-hero");
+    const bossSlot = document.getElementById("vs-portrait-boss");
+    const tauntEl = document.getElementById("vs-taunt-line");
+    if (!overlay || !heroSlot || !bossSlot || !tauntEl) {
+        if (!state.nextQuestion) {
+            document.getElementById("question-text").innerText = "Summoning math magic...";
+            document.getElementById("mcq-grid").innerHTML = "";
+            updateQuestionSourceBadge(null);
+        }
+        await loadQuestion();
+        return;
+    }
+    const heroEl = document.getElementById("player-sprite");
+    const enemyEl = document.getElementById("enemy-sprite");
+    heroSlot.innerHTML = heroEl ? heroEl.innerHTML : "";
+    bossSlot.innerHTML = enemyEl ? enemyEl.innerHTML : "";
+    const bossName = String(qMeta?.name || "Boss").trim() || "Boss";
+    const tauntFull = `${bossName.toUpperCase()} BLOCKS YOUR PATH!`;
+    tauntEl.textContent = "";
+    overlay.classList.remove("hidden", "vs-encounter--exit");
+    overlay.classList.add("vs-encounter--enter");
+    overlay.setAttribute("aria-hidden", "false");
+    void playVsEncounterSwoosh();
+    requestAnimationFrame(() => {
+        overlay.classList.add("vs-encounter--flash");
+    });
+    setTimeout(() => {
+        overlay.classList.add("vs-encounter--portraits-in");
+        void playVsPortraitThud();
+        setTimeout(() => void playVsPortraitThud(), 130);
+    }, 90);
+    const tw = runTypewriterText(tauntEl, tauntFull, 26);
+    if (!state.nextQuestion) {
+        document.getElementById("question-text").innerText = "Summoning math magic...";
+        document.getElementById("mcq-grid").innerHTML = "";
+        updateQuestionSourceBadge(null);
+    }
+    try {
+        await Promise.all([loadQuestion(), delay(VS_MIN_MS), tw]);
+    } catch (e) {
+        console.error("loadQuestion during VS encounter:", e);
+        throw e;
+    } finally {
+        overlay.classList.add("vs-encounter--exit");
+        await delay(520);
+        overlay.classList.add("hidden");
+        overlay.classList.remove(
+            "vs-encounter--enter",
+            "vs-encounter--flash",
+            "vs-encounter--portraits-in",
+            "vs-encounter--exit"
+        );
+        tauntEl.textContent = "";
+        overlay.setAttribute("aria-hidden", "true");
+    }
+}
+
  /** Ensures battle screen never waits unbounded on live AI. */
 async function raceWithPrefetchTimeout(promise, ms) {
     let tid;
@@ -1806,50 +1955,7 @@ async function raceWithPrefetchTimeout(promise, ms) {
         clearTimeout(tid);
     }
 }
- async function fetchWithBackoff(url, options, retries = 5, backoffOpts = {}) {
-    const min429 = backoffOpts.min429DelayMs != null ? backoffOpts.min429DelayMs : 5000;
-    const maxDelay = backoffOpts.maxDelayMs != null ? backoffOpts.maxDelayMs : 20000;
-    let delay = backoffOpts.initialDelayMs != null ? backoffOpts.initialDelayMs : 1000;
-    for (let i = 0; i < retries; i++) {
-        let response;
-        try {
-            response = await fetch(url, options);
-        } catch (err) {
-            if (i === retries - 1) throw err;
-            await new Promise((res) => setTimeout(res, delay));
-            delay = Math.min(delay * 2, maxDelay);
-            continue;
-        }
-        if (response.ok) return response;
-        if (response.status === 404 || response.status === 401 || response.status === 403) {
-            const snippet = await response.text().catch(() => "");
-            const hint =
-                response.status === 404
-                    ? "Wrong endpoint (expected …/compatible-mode/v1/chat/completions). If you set window.__dashscope_chat_completions_url, it must be the full chat URL, not only the API base."
-                    : "Check API key and account access.";
-            throw new Error(`DashScope HTTP ${response.status} — ${hint}${snippet ? ` ${snippet.slice(0, 140)}` : ""}`);
-        }
-        if (response.status === 429 && i < retries - 1) {
-            const raHeader = response.headers.get("Retry-After");
-            let raMs = 0;
-            if (raHeader) {
-                const n = parseInt(raHeader, 10);
-                if (!Number.isNaN(n)) raMs = Math.min(Math.max(0, n) * 1000, 120000);
-            }
-            const wait = Math.max(delay, min429, raMs);
-            await new Promise((res) => setTimeout(res, wait));
-            delay = Math.min(delay * 2, maxDelay);
-            continue;
-        }
-        if (response.status >= 500 && i < retries - 1) {
-            await new Promise((res) => setTimeout(res, delay));
-            delay = Math.min(delay * 2, maxDelay);
-            continue;
-        }
-        throw new Error(`HTTP error ${response.status}`);
-    }
-}
- /** Used when the API key is missing or the model request fails — must vary so battles are not identical every turn. */
+ /** Used when live AI fails — must vary so battles are not identical every turn. */
 const FALLBACK_QUESTIONS = [
     {
         topic_category: "Algebra",
@@ -2009,56 +2115,63 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     }
     return q;
 }
- async function smokePingDashScope(dashscopeKey, modelId, signal) {
-    const url = dashscopeChatCompletionsUrl();
-    const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${dashscopeKey}`
-    };
+ function canUseSecureAiBridge() {
+    try {
+        return !!(isFirebaseReady && auth && auth.currentUser);
+    } catch (_) {
+        return false;
+    }
+}
+ /** Smoke test via HTTPS Callable (no browser API key). */
+ async function smokePingSecureAi(modelId, signal) {
     const bodyBase = {
         model: modelId,
         messages: [{ role: "user", content: 'Output only JSON: {"ping":"ok"}' }],
-        max_tokens: 48
+        max_tokens: 48,
+        response_format: { type: "json_object" }
     };
     const attemptOnce = async () => {
-        let r = await fetch(url, {
-            method: "POST",
-            headers,
-            signal,
-            body: JSON.stringify({ ...bodyBase, response_format: { type: "json_object" } })
-        });
-        if (r.status === 400) {
-            r = await fetch(url, {
-                method: "POST",
-                headers,
-                signal,
-                body: JSON.stringify(bodyBase)
-            });
-        }
-        return r;
+        const p = callGenerateCombatQuestion(bodyBase);
+        if (!signal) return p;
+        return Promise.race([
+            p,
+            new Promise((_, rej) => {
+                if (signal.aborted) {
+                    rej(new DOMException("Aborted", "AbortError"));
+                    return;
+                }
+                signal.addEventListener(
+                    "abort",
+                    () => {
+                        rej(new DOMException("Aborted", "AbortError"));
+                    },
+                    { once: true }
+                );
+            })
+        ]);
     };
-    let res = await attemptOnce();
-    if (res.status === 429) {
-        await new Promise((r) => setTimeout(r, 6000));
-        res = await attemptOnce();
+    let data = await attemptOnce();
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const tryPlain = async () => {
+        const p = callGenerateCombatQuestion({
+            model: modelId,
+            messages: [{ role: "user", content: 'Output only JSON: {"ping":"ok"}' }],
+            max_tokens: 48
+        });
+        if (!signal) return p;
+        return Promise.race([
+            p,
+            new Promise((_, rej) => {
+                signal.addEventListener("abort", () => rej(new DOMException("Aborted", "AbortError")), { once: true });
+            })
+        ]);
+    };
+    let content = data?.choices?.[0]?.message?.content;
+    if (content == null || String(content).trim() === "") {
+        data = await tryPlain();
+        content = data?.choices?.[0]?.message?.content;
     }
-    if (res.status === 429) {
-        await new Promise((r) => setTimeout(r, 12000));
-        res = await attemptOnce();
-    }
-    if (res.status === 429) {
-        const e = new Error("DashScope rate limited (429) after retries");
-        e.isRateLimit = true;
-        throw e;
-    }
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`DashScope HTTP ${res.status}: ${errText.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
-    const content = data?.choices?.[0]?.message?.content;
-    if (content == null || String(content).trim() === "") throw new Error("DashScope: empty content");
+    if (content == null || String(content).trim() === "") throw new Error("Secure AI: empty content");
     const ping = parseAndValidate(SmokePingSchema, content, { lenient: true });
     if (!ping.ok) throw new Error(ping.issuesText || "Smoke ping schema invalid");
 }
@@ -2071,18 +2184,18 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
             el.title = title || "";
         }
     };
-    const { dsKey, dsModel } = getConfiguredAiKeys();
-    if (!dsKey) {
+    const { dsModel } = getConfiguredAiKeys();
+    if (!canUseSecureAiBridge()) {
         lastAiConnectivityCheck = {
             ok: false,
-            summary: "No API key",
+            summary: "No secure AI bridge",
             detail:
-                "Set DASHSCOPE_API_KEY in Netlify (build env) so runtime-config.js includes the key, or __dashscope_api_key in ai-config.js for local file serving."
+                "Sign in with Firebase (anonymous is fine) so the app can call generateCombatQuestion. Offline pool only until then."
         };
         set(
             "AI: SKIP",
             "text-slate-400 font-bold",
-            "No AI key — offline pool only. When you have a key, the banner above each MCQ shows live vs offline for that question."
+            "No Firebase session — offline pool only. After the cloud connects, live MCQs use the secure Cloud Function (no browser API key)."
         );
         syncQuestionsApiBadge();
         return;
@@ -2092,12 +2205,13 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     lastAiConnectivityCheck = { ok: null, summary: "", detail: "" };
     syncQuestionsApiBadge();
     try {
-        await smokePingDashScope(dsKey, dsModel, ctrl.signal);
+        await smokePingSecureAi(dsModel, ctrl.signal);
         clearTimeout(tid);
+        const bridgeLabel = `Secure callable · ${dsModel}`;
         lastAiConnectivityCheck = {
             ok: true,
             summary: "API reachable",
-            detail: `DashScope · ${dsModel}`
+            detail: bridgeLabel
         };
         set(
             "AI: PASS",
@@ -2157,13 +2271,11 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         "\nOutput only the JSON object — no markdown, no code fences, no commentary."
     );
 }
- async function fetchQuestionViaDashScope(dashscopeKey, basePrompt, pedagogy = null) {
-    const url = dashscopeChatCompletionsUrl();
+ async function fetchQuestionViaDashScope(basePrompt, pedagogy = null) {
+    if (!canUseSecureAiBridge()) {
+        throw new Error("Secure AI bridge unavailable (Firebase Auth required for live combat questions)");
+    }
     const { dsModel } = getConfiguredAiKeys();
-    const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${dashscopeKey}`
-    };
     const systemMsg = {
         role: "system",
         content: getCombatQuestionSystemPrompt()
@@ -2178,32 +2290,31 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
             temperature: 0.3,
             max_tokens: 4096
         };
-        const bodyWithSchema = JSON.stringify({
-            ...base,
-            response_format: combatQuestionJsonSchemaResponseFormat()
-        });
-        const bodyWithJson = JSON.stringify({
-            ...base,
-            response_format: { type: "json_object" }
-        });
-        const bodyPlain = JSON.stringify(base);
-        const chain = [bodyWithSchema, bodyWithJson, bodyPlain];
-        let res;
+        const chain = [
+            { ...base, response_format: combatQuestionJsonSchemaResponseFormat() },
+            { ...base, response_format: { type: "json_object" } },
+            base
+        ];
+        let data;
         let lastErr;
         for (let ci = 0; ci < chain.length; ci++) {
             try {
-                res = await fetchWithBackoff(url, { method: "POST", headers, body: chain[ci] }, 4, questionBackoff);
+                data = await callGenerateCombatQuestionWithBackoff(chain[ci], questionBackoff);
                 lastErr = null;
                 break;
             } catch (e) {
                 lastErr = e;
+                const code = e && e.code ? String(e.code) : "";
                 const m = e && e.message ? String(e.message) : "";
-                if (m.includes("400") && ci < chain.length - 1) continue;
+                const is400 =
+                    code.includes("failed-precondition") ||
+                    m.includes("400") ||
+                    m.includes("DashScope 400");
+                if (is400 && ci < chain.length - 1) continue;
                 throw e;
             }
         }
-        if (!res) throw lastErr || new Error("DashScope: request failed");
-        const data = await res.json();
+        if (!data) throw lastErr || new Error("DashScope: request failed");
         if (data && data.error) {
             throw new Error(data.error.message || JSON.stringify(data.error));
         }
@@ -2349,7 +2460,6 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         syncMapQuestionBufferHint();
         syncQuestionsApiBadge();
         const built = buildMathQuestionPrompt(levelWhenScheduled, opts);
-        const { dsKey } = getConfiguredAiKeys();
         const cancelLateAi = { cancelled: false };
         const assignIfStillRelevant = (q, allowAfterCatch = false) => {
             if (!q) return;
@@ -2361,8 +2471,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         try {
             await raceWithPrefetchTimeout(
                 (async () => {
-                    if (!dsKey) throw new Error("no DashScope API key configured");
-                    const q = await fetchQuestionViaDashScope(dsKey, built.prompt, {
+                    if (!canUseSecureAiBridge()) throw new Error("Secure AI bridge unavailable (Firebase Auth required)");
+                    const q = await fetchQuestionViaDashScope(built.prompt, {
                         chosenTopic: built.chosenTopic,
                         targetCriterion: built.targetCriterion
                     });
@@ -2391,6 +2501,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     return fetchPromise;
 }
  async function startGame(level) {
+    await resumeCombatSfxContext();
     closeAllMapHudOverlays();
     state.currentLevel = level;
     if (state.nextQuestion) {
@@ -2443,12 +2554,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         if (spriteEl) spriteEl.innerHTML = battleBossSvgMarkup(level);
         updateHP();
     }
-     if (!state.nextQuestion) {
-        document.getElementById('question-text').innerText = "Summoning math magic...";
-        document.getElementById('mcq-grid').innerHTML = '';
-        updateQuestionSourceBadge(null);
-    }
-    await loadQuestion();
+    await runVsEncounterThenLoadQuestion(qMeta);
 }
  async function loadQuestion() {
     if (loadQuestionInFlight) {
@@ -2528,7 +2634,7 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
  function clearCombatJuiceClasses() {
     document.getElementById("player-sprite")?.classList.remove("combat-player-lunge", "combat-player-hit");
     document.getElementById("enemy-sprite")?.classList.remove("combat-enemy-lunge", "combat-enemy-hit");
-    document.getElementById("battle-impact-flash")?.classList.remove("battle-flash-on");
+    document.getElementById("battle-impact-flash")?.classList.remove("battle-flash-on", "battle-flash-heavy");
 }
  /**
  * Pokémon TCG–style strike: hero lunge → impact flash → HP + floating numbers → optional enemy counter lunge.
@@ -2546,7 +2652,13 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         const applyHpAndNumbers = () => {
             if (fb) fb.style.opacity = "0";
             if (dmg.enemy > 0) {
-                if (bS) bS.classList.add("animate-shake");
+                if (bS) {
+                    bS.classList.remove("animate-shake", "animate-shake-hard");
+                    void bS.offsetWidth;
+                    bS.classList.add("animate-shake-hard");
+                }
+                flash?.classList.add("battle-flash-on", "battle-flash-heavy");
+                setTimeout(() => flash?.classList.remove("battle-flash-on", "battle-flash-heavy"), 260);
                 state.enemyHP = Math.max(0, state.enemyHP - dmg.enemy);
                 showDamage("enemy-damage", dmg.enemy);
                 const heroTier = Math.min(
@@ -2556,6 +2668,15 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
                 void playHeroSpellImpact(heroTier, { isCrit: dmg.isCrit === true });
             }
             if (dmg.player > 0) {
+                if (dmg.enemy <= 0) {
+                    if (bS) {
+                        bS.classList.remove("animate-shake", "animate-shake-hard");
+                        void bS.offsetWidth;
+                        bS.classList.add("animate-shake-hard");
+                    }
+                    flash?.classList.add("battle-flash-on", "battle-flash-heavy");
+                    setTimeout(() => flash?.classList.remove("battle-flash-on", "battle-flash-heavy"), 240);
+                }
                 state.playerHP = Math.max(0, state.playerHP - dmg.player);
                 showDamage("player-damage", dmg.player);
                 const meta = getQuestNode(state.currentLevel);
@@ -2567,14 +2688,12 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
 
         const finish = () => {
             clearCombatJuiceClasses();
-            if (bS) bS.classList.remove("animate-shake");
+            if (bS) bS.classList.remove("animate-shake", "animate-shake-hard");
             resolve();
         };
 
         if (dmg.enemy > 0) {
             pSprite?.classList.add("combat-player-lunge");
-            setTimeout(() => flash?.classList.add("battle-flash-on"), 110);
-            setTimeout(() => flash?.classList.remove("battle-flash-on"), 230);
             setTimeout(() => {
                 eSprite?.classList.add("combat-enemy-hit");
                 applyHpAndNumbers();
@@ -2584,20 +2703,23 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
                         eSprite?.classList.remove("combat-enemy-hit");
                         eSprite?.classList.add("combat-enemy-lunge");
                         pSprite?.classList.add("combat-player-hit");
-                        if (bS) bS.classList.add("animate-shake");
-                        setTimeout(finish, 480);
+                        if (bS) {
+                            bS.classList.remove("animate-shake", "animate-shake-hard");
+                            void bS.offsetWidth;
+                            bS.classList.add("animate-shake-hard");
+                        }
+                        setTimeout(finish, 520);
                     }, 140);
                 } else {
-                    setTimeout(finish, 400);
+                    setTimeout(finish, 480);
                 }
             }, tHit);
         } else if (dmg.player > 0) {
             setTimeout(() => {
                 eSprite?.classList.add("combat-enemy-lunge");
                 pSprite?.classList.add("combat-player-hit");
-                if (bS) bS.classList.add("animate-shake");
                 applyHpAndNumbers();
-                setTimeout(finish, 520);
+                setTimeout(finish, 560);
             }, 200);
         } else {
             if (fb) fb.style.opacity = "0";
@@ -2681,9 +2803,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         question,
         studentResponse,
         difficultyLabel,
-        fetchWithBackoff,
+        canUseSecureAiBridge,
         getConfiguredAiKeys,
-        dashscopeChatCompletionsUrl,
         debugLogAiPrompt
     });
 }
@@ -2713,10 +2834,8 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     );
 }
  async function fetchPracticeMcqViaDashScope({ previousStem = "" } = {}) {
-    const { dsKey, dsModel } = getConfiguredAiKeys();
-    if (!dsKey) throw new Error("no DashScope API key configured");
-    const url = dashscopeChatCompletionsUrl();
-    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` };
+    if (!canUseSecureAiBridge()) throw new Error("Secure AI bridge unavailable (Firebase Auth required)");
+    const { dsModel } = getConfiguredAiKeys();
     const systemMsg = {
         role: "system",
         content:
@@ -2743,19 +2862,16 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
     const postPractice = async (suffix) => {
         const userContent = basePrompt + dashScopePracticeMcqSuffix() + suffix;
         debugLogAiPrompt("dashscope.practice", userContent);
-        const body = JSON.stringify({
-            model: dsModel,
-            messages: [systemMsg, { role: "user", content: userContent }],
-            response_format: { type: "json_object" },
-            temperature: 0.88,
-            max_tokens: 800
-        });
-        const res = await fetchWithBackoff(url, { method: "POST", headers, body }, 3, {
-            min429DelayMs: 3500,
-            maxDelayMs: 20000,
-            initialDelayMs: 900
-        });
-        const data = await res.json();
+        const data = await callGenerateCombatQuestionWithBackoff(
+            {
+                model: dsModel,
+                messages: [systemMsg, { role: "user", content: userContent }],
+                response_format: { type: "json_object" },
+                temperature: 0.88,
+                max_tokens: 800
+            },
+            { min429DelayMs: 3500, maxDelayMs: 20000, initialDelayMs: 900 }
+        );
         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
         return data?.choices?.[0]?.message?.content;
     };
@@ -2809,28 +2925,23 @@ const GENERATED_BOSS_TOPICS = [
     return svg;
 }
  async function fetchRawSvgViaDashScope({ prompt, temperature = 0.9, max_tokens = 1800 }) {
-    const { dsKey, dsModel } = getConfiguredAiKeys();
-    if (!dsKey) throw new Error("no DashScope API key configured");
-    const url = dashscopeChatCompletionsUrl();
-    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` };
+    if (!canUseSecureAiBridge()) throw new Error("Secure AI bridge unavailable (Firebase Auth required)");
+    const { dsModel } = getConfiguredAiKeys();
     const systemMsg = {
         role: "system",
         content:
             "Your entire response must be RAW SVG only. No markdown. No code fences. No extra text. The first character must be < and the last character must be >."
     };
     debugLogAiPrompt("dashscope.boss_svg", prompt);
-    const body = JSON.stringify({
-        model: dsModel,
-        messages: [systemMsg, { role: "user", content: prompt }],
-        temperature,
-        max_tokens
-    });
-    const res = await fetchWithBackoff(url, { method: "POST", headers, body }, 4, {
-        min429DelayMs: 3500,
-        maxDelayMs: 24000,
-        initialDelayMs: 1000
-    });
-    const data = await res.json();
+    const data = await callGenerateCombatQuestionWithBackoff(
+        {
+            model: dsModel,
+            messages: [systemMsg, { role: "user", content: prompt }],
+            temperature,
+            max_tokens
+        },
+        { min429DelayMs: 3500, maxDelayMs: 24000, initialDelayMs: 1000 }
+    );
     if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
     const content = data?.choices?.[0]?.message?.content;
     if (content == null || String(content).trim() === "") throw new Error("DashScope returned empty SVG");
@@ -2840,10 +2951,8 @@ const GENERATED_BOSS_TOPICS = [
     return fenced ? fenced[1].trim() : svg;
 }
  async function fetchBossMetaViaDashScope(level) {
-    const { dsKey, dsModel } = getConfiguredAiKeys();
-    if (!dsKey) throw new Error("no DashScope API key configured");
-    const url = dashscopeChatCompletionsUrl();
-    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` };
+    if (!canUseSecureAiBridge()) throw new Error("Secure AI bridge unavailable (Firebase Auth required)");
+    const { dsModel } = getConfiguredAiKeys();
     const systemMsg = {
         role: "system",
         content:
@@ -2866,19 +2975,16 @@ const GENERATED_BOSS_TOPICS = [
     const postBossMeta = async (suffix) => {
         const user = userBase + suffix;
         debugLogAiPrompt("dashscope.boss_meta", user);
-        const body = JSON.stringify({
-            model: dsModel,
-            messages: [systemMsg, { role: "user", content: user }],
-            response_format: { type: "json_object" },
-            temperature: 0.8,
-            max_tokens: 260
-        });
-        const res = await fetchWithBackoff(url, { method: "POST", headers, body }, 4, {
-            min429DelayMs: 3500,
-            maxDelayMs: 24000,
-            initialDelayMs: 1000
-        });
-        const data = await res.json();
+        const data = await callGenerateCombatQuestionWithBackoff(
+            {
+                model: dsModel,
+                messages: [systemMsg, { role: "user", content: user }],
+                response_format: { type: "json_object" },
+                temperature: 0.8,
+                max_tokens: 260
+            },
+            { min429DelayMs: 3500, maxDelayMs: 24000, initialDelayMs: 1000 }
+        );
         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
         return data?.choices?.[0]?.message?.content;
     };
@@ -3034,6 +3140,7 @@ window.nextPracticeQuestion = async () => {
     e.preventDefault();
     if (state.isAnimating) return;
     state.isAnimating = true;
+    await resumeCombatSfxContext();
     const q = state.activeQuestion || {};
     const studentResponse = String(document.getElementById("answer-input")?.value || "").trim();
     const castBtn = document.getElementById("cast-spell-btn");
@@ -3074,7 +3181,23 @@ window.nextPracticeQuestion = async () => {
             await loadQuestion();
             return;
         }
-        const judged = await gradeResponseViaDashScope({ question: q, studentResponse });
+        await startJudgeChargingUi();
+        let judged;
+        let usedFallbackFromApiFailure = false;
+        try {
+            [judged] = await Promise.all([
+                gradeResponseViaDashScope({ question: q, studentResponse }),
+                delay(JUDGE_MIN_MS)
+            ]);
+        } catch (err) {
+            console.error("grading failed:", err);
+            usedFallbackFromApiFailure = true;
+            [judged] = await Promise.all([
+                Promise.resolve(localFallbackJudge({ question: q, studentResponse })),
+                delay(JUDGE_MIN_MS)
+            ]);
+        }
+        clearJudgeChargingUi();
         recordCombatSkillOutcome(q, judged);
         applyComboUpdate(judged.band);
         const dmg0 = damageForJudgement(judged);
@@ -3098,67 +3221,47 @@ window.nextPracticeQuestion = async () => {
             dmg.enemy > 0 ? "border-green-500 text-green-400" : "border-red-500 text-red-400"
         } p-4 rounded-xl text-center z-40 opacity-100 font-black text-2xl`;
         fb.style.opacity = "1";
-        const hitStop = state.currentLevel >= 7 && (judged.band === "correct_with_reasoning" || dmg.isCrit === true) ? 100 : 0;
+        if (dmg.enemy <= 0) void playJudgeSpellFizzle();
+        const hitStop =
+            !usedFallbackFromApiFailure && state.currentLevel >= 7 && (judged.band === "correct_with_reasoning" || dmg.isCrit === true)
+                ? 100
+                : 0;
         await playCombatStrikeSequence(dmg, hitStop);
         state.turnIndex++;
-        const header =
-            judged.band === "correct_with_reasoning"
-                ? "Great structure — full credit."
-                : judged.band === "correct_no_reasoning"
-                  ? "Answer is right, but you need better reasoning."
-                  : judged.band === "partial"
-                    ? "Some progress — tighten your steps."
-                    : "Not yet — let’s fix the method.";
         state.requireReflection = judged.band === "incorrect" || judged.band === "partial";
-        const potionNote = state.potionUsedThisBattle && dmg0.player > 0 && dmg.player === 0 ? "\n\nHealth Potion: You were saved from defeat — next question will be easier." : "";
-        showDetailedFeedback(`${header}\n\n${judged.feedback}${potionNote}`);
-        if (state.enemyHP <= 0 || state.playerHP <= 0) {
-            finishBattle(state.enemyHP <= 0);
+        const potionNote =
+            state.potionUsedThisBattle && dmg0.player > 0 && dmg.player === 0
+                ? "\n\nHealth Potion: You were saved from defeat — next question will be easier."
+                : "";
+        if (usedFallbackFromApiFailure) {
+            showDetailedFeedback(
+                `Judge spell fizzled (AI grading failed), so I used a safe fallback grade.\n\n${judged.feedback}${potionNote}`
+            );
+        } else {
+            const header =
+                judged.band === "correct_with_reasoning"
+                    ? "Great structure — full credit."
+                    : judged.band === "correct_no_reasoning"
+                      ? "Answer is right, but you need better reasoning."
+                      : judged.band === "partial"
+                        ? "Some progress — tighten your steps."
+                        : "Not yet — let’s fix the method.";
+            showDetailedFeedback(`${header}\n\n${judged.feedback}${potionNote}`);
         }
-    } catch (err) {
-        console.error("grading failed:", err);
-        const judged = localFallbackJudge({ question: q, studentResponse });
-        recordCombatSkillOutcome(q, judged);
-        applyComboUpdate(judged.band);
-        const dmg0 = damageForJudgement(judged);
-        const comboMult = state.comboActive ? COMBAT_COMBO_MULT : 1.0;
-        const weaponMultFb = weaponDamageMultiplier(state.cosmeticsTier);
-        let enemyDmg = dmg0.enemy > 0 ? Math.round(dmg0.enemy * comboMult * weaponMultFb) : 0;
-        let playerDmg = dmg0.player;
-        if (state.nextEnemyAttackZero && playerDmg > 0) {
-            playerDmg = 0;
-            state.nextEnemyAttackZero = false;
-        }
-        if (playerDmg > 0 && (state.playerHP - playerDmg) <= 0 && !state.potionUsedThisBattle) {
-            state.potionUsedThisBattle = true;
-            state.forceEasierNextQuestion = true;
-            state.playerHP = Math.max(state.playerHP, 30);
-            playerDmg = 0;
-        }
-        const dmg = { ...dmg0, enemy: enemyDmg, player: playerDmg };
-        fb.innerText = dmg.label;
-        fb.className = `absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 ${
-            dmg.enemy > 0 ? "border-green-500 text-green-400" : "border-red-500 text-red-400"
-        } p-4 rounded-xl text-center z-40 opacity-100 font-black text-2xl`;
-        fb.style.opacity = "1";
-        await playCombatStrikeSequence(dmg, 0);
-        state.turnIndex++;
-        state.requireReflection = judged.band === "incorrect" || judged.band === "partial";
-        const potionNote = state.potionUsedThisBattle && dmg0.player > 0 && dmg.player === 0 ? "\n\nHealth Potion: You were saved from defeat — next question will be easier." : "";
-        showDetailedFeedback(
-            `Judge spell fizzled (AI grading failed), so I used a safe fallback grade.\n\n${judged.feedback}${potionNote}`
-        );
         if (state.enemyHP <= 0 || state.playerHP <= 0) {
             finishBattle(state.enemyHP <= 0);
         }
     } finally {
+        clearJudgeChargingUi();
         if (castBtn) castBtn.disabled = false;
-        if (bS) bS.classList.remove("animate-shake");
+        if (bS) bS.classList.remove("animate-shake", "animate-shake-hard");
         state.isAnimating = false;
         syncCurrentProfileToCloud();
     }
 };
  function finishBattle(win) {
+    state.battlePinnedTopic = null;
+    invalidateCombatQuestionPrefetch();
     const victoryGain = victoryShardsForBossLevel(state.currentLevel);
     const extraLines = [];
     let participationExtra = 0;
@@ -3208,6 +3311,7 @@ window.nextPracticeQuestion = async () => {
     syncMapAudioControlsFromState();
     void startMapBgmFromUserGesture();
     state.battlePinnedTopic = null;
+    invalidateCombatQuestionPrefetch();
     state.turnIndex = 0;
     state.isAnimating = false;
     syncShardsUi();
@@ -3235,10 +3339,8 @@ window.closeDetailedFeedback = async () => {
         if (reflect.length >= 10) {
             try {
                 const parry = await (async () => {
-                    const { dsKey, dsModel } = getConfiguredAiKeys();
-                    if (!dsKey) return { isParry: false, note: "" };
-                    const url = dashscopeChatCompletionsUrl();
-                    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${dsKey}` };
+                    if (!canUseSecureAiBridge()) return { isParry: false, note: "" };
+                    const { dsModel } = getConfiguredAiKeys();
                     const systemMsg = {
                         role: "system",
                         content:
@@ -3259,19 +3361,16 @@ window.closeDetailedFeedback = async () => {
                         `- note: string (1 short sentence)\n`;
                     const postParry = async (userContent) => {
                         debugLogAiPrompt("dashscope.parry_reflection", userContent);
-                        const body = JSON.stringify({
-                            model: dsModel,
-                            messages: [systemMsg, { role: "user", content: userContent }],
-                            response_format: { type: "json_object" },
-                            temperature: 0.2,
-                            max_tokens: 180
-                        });
-                        const res = await fetchWithBackoff(url, { method: "POST", headers, body }, 3, {
-                            min429DelayMs: 3500,
-                            maxDelayMs: 20000,
-                            initialDelayMs: 900
-                        });
-                        const data = await res.json();
+                        const data = await callGenerateCombatQuestionWithBackoff(
+                            {
+                                model: dsModel,
+                                messages: [systemMsg, { role: "user", content: userContent }],
+                                response_format: { type: "json_object" },
+                                temperature: 0.2,
+                                max_tokens: 180
+                            },
+                            { min429DelayMs: 3500, maxDelayMs: 20000, initialDelayMs: 900 }
+                        );
                         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
                         return data?.choices?.[0]?.message?.content;
                     };

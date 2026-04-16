@@ -32,6 +32,11 @@ async function resumeIfNeeded() {
     if (ctx.state === "suspended") await ctx.resume();
 }
 
+/** Call early from click/touch handlers (and await at combat entry) so Web Audio unlocks before any awaits. */
+export async function resumeCombatSfxContext() {
+    return resumeIfNeeded();
+}
+
 /**
  * Canonical map levels 1..N use one strike palette per slot; higher levels hash off boss name.
  * @param {number} level
@@ -368,4 +373,192 @@ function snapBite(ctx, now, out, g0) {
     g.connect(out);
     ns.start(now);
     ns.stop(now + 0.07);
+}
+
+/** White flash + noise swoosh — VS encounter start */
+export async function playVsEncounterSwoosh() {
+    await resumeIfNeeded();
+    const ug = sfxUserGain;
+    if (ug <= 0) return;
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.value = 0.001;
+    master.connect(ctx.destination);
+
+    const ns = ctx.createBufferSource();
+    ns.buffer = getNoiseBuffer(ctx);
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(4200, now);
+    bp.frequency.exponentialRampToValueAtTime(280, now + 0.22);
+    bp.Q.value = 0.9;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.linearRampToValueAtTime(0.32 * ug, now + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    ns.connect(bp);
+    bp.connect(g);
+    g.connect(master);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(90, now);
+    osc.frequency.exponentialRampToValueAtTime(42, now + 0.18);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.001, now);
+    og.gain.linearRampToValueAtTime(0.14 * ug, now + 0.025);
+    og.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+    osc.connect(og);
+    og.connect(master);
+
+    master.gain.setValueAtTime(0.001, now);
+    master.gain.linearRampToValueAtTime(0.95 * ug, now + 0.02);
+    master.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+
+    ns.start(now);
+    ns.stop(now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.26);
+}
+
+/** Heavy thud when VS portraits slam in */
+export async function playVsPortraitThud() {
+    await resumeIfNeeded();
+    const ug = sfxUserGain;
+    if (ug <= 0) return;
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.value = 0.001;
+    master.connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(62, now);
+    osc.frequency.exponentialRampToValueAtTime(38, now + 0.14);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.linearRampToValueAtTime(0.42 * ug, now + 0.018);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    osc.connect(g);
+    g.connect(master);
+
+    const ns = ctx.createBufferSource();
+    ns.buffer = getNoiseBuffer(ctx);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 420;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.001, now);
+    ng.gain.linearRampToValueAtTime(0.22 * ug, now + 0.008);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    ns.connect(lp);
+    lp.connect(ng);
+    ng.connect(master);
+
+    master.gain.setValueAtTime(0.001, now);
+    master.gain.linearRampToValueAtTime(ug, now + 0.015);
+    master.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+
+    osc.start(now);
+    osc.stop(now + 0.32);
+    ns.start(now);
+    ns.stop(now + 0.14);
+}
+
+/** Rising magical hum while the judge runs */
+export async function playMagicChargeUp(durationSec = 2.8) {
+    await resumeIfNeeded();
+    const ug = sfxUserGain;
+    if (ug <= 0) return;
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    const dur = Math.min(8, Math.max(0.4, durationSec));
+    const master = ctx.createGain();
+    master.gain.value = 0.001;
+    master.connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(420, now + dur * 0.92);
+
+    const osc2 = ctx.createOscillator();
+    osc2.type = "triangle";
+    osc2.frequency.setValueAtTime(182, now);
+    osc2.frequency.exponentialRampToValueAtTime(426, now + dur * 0.92);
+
+    const g1 = ctx.createGain();
+    const g2 = ctx.createGain();
+    const ring = ctx.createGain();
+    osc.connect(g1);
+    osc2.connect(g2);
+    g1.gain.value = 0.14 * ug;
+    g2.gain.value = 0.11 * ug;
+    g1.connect(ring);
+    g2.connect(ring);
+    ring.connect(master);
+
+    ring.gain.setValueAtTime(0.001, now);
+    ring.gain.linearRampToValueAtTime(0.22 * ug, now + 0.12);
+    ring.gain.linearRampToValueAtTime(0.3 * ug, now + dur * 0.72);
+    ring.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    master.gain.setValueAtTime(0.001, now);
+    master.gain.linearRampToValueAtTime(0.95 * ug, now + 0.06);
+    master.gain.linearRampToValueAtTime(1 * ug, now + dur * 0.45);
+    master.gain.exponentialRampToValueAtTime(0.001, now + dur + 0.08);
+
+    osc.start(now);
+    osc2.start(now);
+    osc.stop(now + dur + 0.02);
+    osc2.stop(now + dur + 0.02);
+}
+
+/** Short “spell fizzled” / record-scratch sting */
+export async function playJudgeSpellFizzle() {
+    await resumeIfNeeded();
+    const ug = sfxUserGain;
+    if (ug <= 0) return;
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.value = 0.001;
+    master.connect(ctx.destination);
+
+    const ns = ctx.createBufferSource();
+    ns.buffer = getNoiseBuffer(ctx);
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(2400, now);
+    bp.frequency.exponentialRampToValueAtTime(180, now + 0.18);
+    bp.Q.value = 1.2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.linearRampToValueAtTime(0.26 * ug, now + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    ns.connect(bp);
+    bp.connect(g);
+    g.connect(master);
+
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.linearRampToValueAtTime(95, now + 0.16);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.001, now);
+    og.gain.linearRampToValueAtTime(0.08 * ug, now + 0.006);
+    og.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.connect(og);
+    og.connect(master);
+
+    master.gain.setValueAtTime(0.001, now);
+    master.gain.linearRampToValueAtTime(0.9 * ug, now + 0.01);
+    master.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    ns.start(now);
+    ns.stop(now + 0.22);
+    osc.start(now);
+    osc.stop(now + 0.22);
 }
