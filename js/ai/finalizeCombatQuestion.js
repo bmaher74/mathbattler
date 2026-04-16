@@ -13,7 +13,12 @@ function extractNumericTokens(s) {
     const re = /(^|[^\w])(-?\d+(?:\.\d+)?)(?![\w])/g;
     let m;
     while ((m = re.exec(cleaned))) {
-        out.add(m[2]);
+        const raw = m[2];
+        // Canonicalize decimals so 3.50 === 3.5 and 0.30 === 0.3.
+        // Keep as string tokens (no locale); avoid scientific notation by using Number -> String for typical sizes.
+        const n = Number(raw);
+        if (Number.isFinite(n)) out.add(String(n));
+        else out.add(raw);
     }
     return out;
 }
