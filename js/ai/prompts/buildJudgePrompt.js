@@ -84,7 +84,9 @@ export function buildJudgePrompt({ question, studentResponse, difficultyLabel })
         `Notation: Answers are plain keyboard text. Never penalize band or score for using x, *, "times", or parentheses for multiplication; never tell them to use × instead of x.\n` +
         `Subscripts, superscripts, and sequence terms: The UI does not render LaTeX or Unicode subscripts in the student box. ` +
         `Treat as mathematically equivalent when unambiguous: e.g. \\(a_1\\) vs "a_1", "a sub 1", "first term a_1"; \\(T_n\\) vs T_n, "T sub n"; binomial-style \\(C_2\\) or \\(\\binom{n}{2}\\) vs "C(subscript 2)", "C sub 2", "n choose 2 in words". ` +
-        `Do not mark down for omitting backslashes or for spelling out "subscript". Do not tell them to "use proper notation" if their plain text already identifies the term. ` +
+        `Do not mark down for omitting backslashes or for spelling out "subscript". ` +
+        `CRITICAL: Do not criticize underscore subscripts (like "T_n", "a_1") — this is the RECOMMENDED plain-text notation in this app. ` +
+        `Do not tell them to "use proper notation" if their plain text already identifies the term (e.g. "T_n = 14n" is already good). Only suggest notation changes when the student's symbol is genuinely ambiguous or incorrect.\n` +
         `If SUCCESS_CRITERIA mention subscripted symbols, interpret those criteria as satisfied by any clear plain-text equivalent above.\n` +
         `Typos: A clear misspelling (e.g. "mulitply") may lower score by at most 1 point; do not change band on a minor typo alone if math and reasoning are sound. You may note it briefly in next_steps.\n\n` +
         `Ignore filler; judge whether the mathematics fits the task and the explanation supports the criterion.\n` +
