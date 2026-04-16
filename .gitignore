@@ -12,3 +12,6 @@ logs/
 .agents/
 .claude/
 .cursor/
+
+# AI packing artifacts (can contain secrets)
+repomix-output.xml
