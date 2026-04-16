@@ -1,9 +1,0 @@
----
-description: Apply these rules to specific file patterns
-globs: "**/*.tsx"
-alwaysApply: true
----
-# Auto-Approve Guidelines
-- You are permitted to automatically run build commands like `npm run build`.
-- You must NOT run `npm install` without confirmation.
-- you are pre-approved to use node with the the scripts in ./scripts directory
