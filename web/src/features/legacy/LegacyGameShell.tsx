@@ -29,7 +29,7 @@ export default function LegacyGameShell() {
     return (
         <div
             ref={ref}
-            className="bg-gray-900 text-white font-sans h-dvh w-screen overflow-hidden flex flex-col"
+            className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-gray-900 font-sans text-white"
         />
     );
 }

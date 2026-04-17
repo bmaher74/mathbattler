@@ -140,5 +140,6 @@ describe("buildCombatQuestionUserPrompt", () => {
         assert.match(b.prompt, /On-ramp \(level 1\)/);
         assert.match(b.prompt, /Level 1 on-ramp \(strict\)/);
         assert.match(b.prompt, /err easy/);
+        assert.match(b.prompt, /DIFFICULTY SCAFFOLD/);
     });
 });

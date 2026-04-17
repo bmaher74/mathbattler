@@ -3,6 +3,7 @@ import { normalizeLatexCurrency } from "./latexPostprocess.js";
 import { sanitizeLlmProseString } from "./llmProseSanitize.js";
 import { combatQuestionRequiresDiagram, parsePlotlySpec, synthesizeQuantityStoryPlotlySpec } from "./plotlyQuestionHeuristics.js";
 import { hasRenderableCombatGom, hasRenderableCombatVisual } from "./combatVisualSvg.js";
+import { latexHasCommaSeparatedNumericWorkedSteps } from "./stemMathSpoilerHeuristic.js";
 
 function extractNumericTokens(s) {
     const text = String(s ?? "");
@@ -106,6 +107,35 @@ function tryEvalSimpleArithmeticFromLatex(latex) {
     }
 }
 
+function collectPlayerVisibleStemLatexChunks(q) {
+    /** @type {string[]} */
+    const out = [];
+    if (Array.isArray(q.text_blocks) && q.text_blocks.length > 0) {
+        for (const b of q.text_blocks) {
+            if (b && b.type === "inline_math" && b.latex != null) out.push(String(b.latex));
+        }
+        return out;
+    }
+    const { math } = extractMathSegmentsFromTextStem(q.text);
+    if (!math.trim()) return out;
+    return math.split("\n").filter((s) => String(s).trim());
+}
+
+/**
+ * Models often paste a full discount ledger into inline_math; that belongs in _thought_process only.
+ * @param {{ text?: string, text_blocks?: Array<{ type?: string, latex?: string }> }} q
+ */
+function assertStemMathDoesNotSpoilerWorkedChain(q) {
+    for (const chunk of collectPlayerVisibleStemLatexChunks(q)) {
+        if (latexHasCommaSeparatedNumericWorkedSteps(chunk)) {
+            throw new Error(
+                "Stem math spoils the task: do not show comma- or semicolon-separated worked numeric steps " +
+                    "in player-visible math; put the full calculation chain in _thought_process only."
+            );
+        }
+    }
+}
+
 function assertInlineMathMatchesExpectedAnswerIfPureNumeric(q) {
     const expected = parseNumericAnswer(q.expected_answer);
     if (expected == null) return;
@@ -180,6 +210,7 @@ export function finalizeCombatQuestion(q) {
             assertProseNumbersAppearInMath({ ...seg, groundingText: numericGrounding });
         }
         assertInlineMathMatchesExpectedAnswerIfPureNumeric(q);
+        assertStemMathDoesNotSpoilerWorkedChain(q);
     } catch (e) {
         // Bubble as a validation-style error so the caller triggers a regenerate.
         throw e;

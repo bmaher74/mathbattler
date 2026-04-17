@@ -35,3 +35,11 @@ Graduate in code with a few knobs; keep the written band count small (or slightl
 So: no, graduating across levels does not inherently make prompt logic too complicated; it becomes complicated only if you try to express all nuance as free-form prose per level instead of structured parameters + short bullets.
 
 I'm in Ask mode, so I can’t edit the repo; if you want a concrete LEVEL_TUNING design wired into buildCombatQuestionUserPrompt, switch to Agent mode and we can implement it
+
+---
+
+## Implemented in repo (graduated knobs)
+
+- **`js/game/levelDifficulty.js`**: `getLevelDifficultyKnobs(mapLevel, { forceEasier })` returns `numericCeiling`, `maxStemWords`, `maxConceptualSteps`, `readingAgeShort`, and `allowMultiStep` (piecewise by map level). `formatDifficultyKnobsPromptBlock` turns that into the **DIFFICULTY SCAFFOLD** paragraph block.
+- **`js/ai/prompts/combatQuestionPedagogy.js`**: `buildCombatQuestionUserPrompt` appends that block **before** `buildMypConstraintsBlock` so curriculum bands stay coarse while numbers/stem density graduate by level.
+- **Tests**: `test/level-difficulty-knobs.test.mjs` (plus existing pedagogy tests assert the scaffold appears for level 1 prompts).

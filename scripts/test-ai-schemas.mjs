@@ -158,6 +158,28 @@ describe("CombatQuestionSchema", () => {
         assert.ok(String(q.text).includes("\\(x+1=5\\)"));
     });
 
+    it("finalizeCombatQuestion rejects comma-separated numeric worked steps in inline_math", () => {
+        const r = CombatQuestionSchema.safeParse({
+            criterion: "a",
+            text_blocks: [
+                { type: "prose", content: "The serpent sneers." },
+                {
+                    type: "inline_math",
+                    latex: "4 \\times 5 = 20,\\,20\\% \\times 20 = 4,\\,20 - 4 = 16,\\,30 - 16 = 14"
+                }
+            ],
+            expected_answer: "14",
+            success_criteria: "- ok",
+            ideal_explanation: "Spend then subtract from 30.",
+            visual_type: "none",
+            visual_spec: null,
+            plotly_spec: "",
+            type: "input"
+        });
+        assert.equal(r.success, true);
+        assert.throws(() => finalizeCombatQuestion({ ...r.data }), /spoils the task/i);
+    });
+
     it("allows prose numbers grounded in ideal/expected when not all appear in displayed math", () => {
         const r = CombatQuestionSchema.safeParse({
             criterion: "a",

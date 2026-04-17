@@ -10,6 +10,7 @@ import {
     MATH_BATTLE_DM_DELIVERY_NUDGES,
     pickSeededIndex
 } from "./mathBattleSeeds.js";
+import { formatDifficultyKnobsPromptBlock, getLevelDifficultyKnobs } from "../../game/levelDifficulty.js";
 
 /** Strands used for topic interleaving (must stay in sync with prompts and profile UI). */
 /**
@@ -486,7 +487,7 @@ Output: One rigorous MYP question. Machine rules (JSON schema, strings) win over
 Structure & content:
 - Single JSON object, no fences (details in HARD REQUIREMENTS). type "input", criterion "${targetCriterion}", no MCQ.
 - Word problems: one consistent unit/ledger end-to-end; expected_answer and ideal_explanation match that ledger. One variable, one meaning (do not use x for both a count and a unit price). If you state cash on hand, the purchase total must be possible with that cash unless you explain extra money.
-- Stem (player-readable question): EITHER (a) one string in "text", OR (b) when real US dollar money and algebra both appear: "text_blocks" — in prose, $ is ONLY for currency (e.g. "$5"); never $x$ or $3x+5$ in prose (that caused broken math rendering). Put every equation in inline_math; do not duplicate the same equation in prose and inline_math. Order: prose → inline_math (equation) → optional prose (question). Latex fields: no $ or \\(...\\); the app wraps them.
+- Stem (player-readable question): EITHER (a) one string in "text", OR (b) when real US dollar money and algebra both appear: "text_blocks" — in prose, $ is ONLY for currency (e.g. "$5"); never $x$ or $3x+5$ in prose (that caused broken math rendering). Put every equation in inline_math; do not duplicate the same equation in prose and inline_math. Order: prose → inline_math (equation) → optional prose (question). Latex fields: no $ or \\(...\\); the app wraps them. **Do not paste a comma-separated worked discount/spend ledger into inline_math** (that gives away the answer); keep the ledger in "_thought_process" and ask the question in prose + at most one concise math line without numeric results for every step.
 - Student answers are typed in a plain box: no LaTeX there. For sequences/indexed terms, show notation correctly in the stem (\\(...\\)) but do not expect students to type delimiters; optional hint that "a_1" or "a sub 1" is fine. success_criteria must be judgeable against plain-text responses.
 - If you use "text" only: Math in \\(...\\) only; currency like $5 once, not $5$; in JSON double backslashes in TeX (\\\\text, \\\\times, \\\\frac).
 - If you use "text_blocks": omit the "text" key entirely (schema rejects both stem modes at once).
@@ -497,6 +498,7 @@ Structure & content:
 Creative: Original scenario; optional sparks (not data): ${contextSeed} · ${dmDeliveryNudge}
 Vary task style with the criterion (solve, simplify, justify pattern, model, interpret). Skip tired marble-bag setups unless the topic needs them — then you must chart.
 ${avoidPrior}
+${formatDifficultyKnobsPromptBlock(getLevelDifficultyKnobs(mapLevel, { forceEasier: easier }))}
 ${buildMypConstraintsBlock(easier ? 1 : mapLevel)}`;
 
     const nextStrandRotationSeq = strandSeq;

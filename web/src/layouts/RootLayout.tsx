@@ -1,9 +1,17 @@
 import { Outlet } from "react-router-dom";
+import MigrationNav from "@/components/MigrationNav";
 
 /**
  * Top-level route shell: safe area, global chrome, error boundaries can wrap here later.
- * Legacy game still fills the viewport via nested routes.
+ * Classic game at `/game` hides the migration strip so the legacy layout keeps full height.
  */
 export default function RootLayout() {
-    return <Outlet />;
+    return (
+        <div className="flex min-h-dvh flex-col bg-slate-950 text-slate-100">
+            <MigrationNav />
+            <div className="min-h-0 flex-1">
+                <Outlet />
+            </div>
+        </div>
+    );
 }

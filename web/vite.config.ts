@@ -99,7 +99,8 @@ export default defineConfig({
     plugins: [react(), repoStaticPlugin()],
     resolve: {
         alias: {
-            "@": path.resolve(__dirname, "src")
+            "@": path.resolve(__dirname, "src"),
+            "@game": path.join(REPO_ROOT, "js/game")
         }
     },
     server: {

@@ -25,3 +25,6 @@ export const EP_SHARD_REFLECTION = 3;
 export const EP_SHARD_DAILY_QUEST_BATTLE = 5;
 export const EP_SHARD_LOGIN = 2;
 export const EP_STREAK_MILESTONE_SHARDS = { 3: 8, 7: 20, 14: 40 };
+
+/** React map routes set this before `/game?overlay=…` so classic Close can navigate back into the SPA. */
+export const MB_REACT_RETURN_AFTER_OVERLAY_KEY = "mb_react_return_after_overlay";

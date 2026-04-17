@@ -60,8 +60,10 @@ import {
     EP_SHARD_REFLECTION,
     EP_SHARD_DAILY_QUEST_BATTLE,
     EP_SHARD_LOGIN,
-    EP_STREAK_MILESTONE_SHARDS
+    EP_STREAK_MILESTONE_SHARDS,
+    MB_REACT_RETURN_AFTER_OVERLAY_KEY
 } from "./game/constants.js";
+import { isSafeInternalAssignPath } from "./game/safeInternalNavPath.js";
 
 import { proseWithMathToHtml, escapeHtmlText } from "./ai/displayMathProse.js";
 import { parseAndValidate, extractJsonFromModelText, parseJsonLenient } from "./ai/parseModelJson.js";
@@ -234,6 +236,60 @@ let loginGateResolved = false;
         const p = String(prompt ?? "");
         console.groupCollapsed(`AI prompt (${label}) • ${p.length} chars`);
         console.log(p);
+        console.groupEnd();
+    } catch (_) {}
+}
+/** DevTools: full practice MCQ bridge call + JSON/schema parse. Enable via ?debugPracticeMcq=1, localStorage mb_debug_practice_mcq=1, window.__debug_practice_mcq=true, or existing prompt debug (?debugPrompts=1 / mb_debug_ai_prompts). */
+ function isPracticeMcqLlmTraceEnabled() {
+    if (isPromptDebugEnabled()) return true;
+    try {
+        const qs = new URLSearchParams(location.search);
+        if (qs.get("debugPracticeMcq") === "1") return true;
+    } catch (_) {}
+    try {
+        if (typeof window !== "undefined" && window.__debug_practice_mcq === true) return true;
+    } catch (_) {}
+    try {
+        return localStorage.getItem("mb_debug_practice_mcq") === "1";
+    } catch (_) {
+        return false;
+    }
+}
+/**
+ * @param {{ attempt: number, model: string, systemText: string, userContent: string, rawAssistant: string | null, apiError?: unknown, parseResult: { ok: boolean, stage?: string, issuesText?: string } | null }} p
+ */
+ function logPracticeMcqLlmTrace(p) {
+    if (!isPracticeMcqLlmTraceEnabled()) return;
+    try {
+        const sys = String(p.systemText ?? "");
+        const usr = String(p.userContent ?? "");
+        const asst = p.rawAssistant == null ? "" : String(p.rawAssistant);
+        const pr = p.parseResult;
+        const parseLabel =
+            pr == null ? "n/a" : pr.ok ? "OK" : `FAIL (${String(pr.stage || "schema")})`;
+        console.groupCollapsed(
+            `[MathBattler] Practice MCQ LLM • attempt ${p.attempt} • ${p.model} • parse ${parseLabel} • assistant ${asst.length} chars`
+        );
+        if (p.apiError != null) console.log("%cAPI error object", "font-weight:700;color:#f85149", p.apiError);
+        console.log("%cSystem message", "font-weight:700", "\n" + sys);
+        console.log("%cUser message (full prompt)", "font-weight:700", "\n" + usr);
+        console.log("%cAssistant (raw message.content)", "font-weight:700", "\n" + asst);
+        if (pr && !pr.ok) {
+            console.log("%cParse / schema issues", "font-weight:700;color:#f85149", String(pr.issuesText || pr.error || ""));
+        }
+        console.groupEnd();
+    } catch (_) {}
+}
+ function logPracticeMcqFinalizedQuestion(q) {
+    if (!isPracticeMcqLlmTraceEnabled()) return;
+    try {
+        console.groupCollapsed("[MathBattler] Practice MCQ • finalized question (after finalizePracticeMcq)");
+        console.log("topic_category:", q?.topic_category);
+        console.log("answer:", q?.answer);
+        console.log("options:", q?.options);
+        console.log("visual_type:", q?.visual_type);
+        console.log("text:", String(q?.text || ""));
+        console.log("ideal_explanation:", String(q?.ideal_explanation || ""));
         console.groupEnd();
     } catch (_) {}
 }
@@ -1153,6 +1209,28 @@ async function initFirebase() {
  window.addEventListener("pagehide", () => {
     if (state.playerName) syncCurrentProfileToCloud();
 });
+/** React migration shell (`/signin` → `/map` → `/game`) stores a level here; consumed once after login. */
+function readPendingStartLevelFromBridge() {
+    try {
+        const raw = sessionStorage.getItem("mb_pending_start_level");
+        if (raw == null) return null;
+        sessionStorage.removeItem("mb_pending_start_level");
+        const n = parseInt(String(raw), 10);
+        return Number.isFinite(n) && n >= 1 ? n : null;
+    } catch (_) {
+        return null;
+    }
+}
+/** Pre-fills `#player-name-input` from the React sign-in page before the player clicks Access. */
+function applyReactBridgePrefill() {
+    try {
+        const raw = sessionStorage.getItem("mb_prefill_player_name");
+        if (raw == null) return;
+        sessionStorage.removeItem("mb_prefill_player_name");
+        const el = document.getElementById("player-name-input");
+        if (el && "value" in el) el.value = String(raw).slice(0, 120);
+    } catch (_) {}
+}
  window.handleLogin = async () => {
     const name = document.getElementById('player-name-input').value.trim() || 'Student Brendan';
     state.playerName = name;
@@ -1218,6 +1296,11 @@ async function initFirebase() {
     syncQuestionsApiBadge();
     startCloudSyncHeartbeat();
     void syncCurrentProfileToCloud();
+    const pendingStart = readPendingStartLevelFromBridge();
+    const unlocked = typeof state.unlockedLevels === "number" && state.unlockedLevels >= 1 ? state.unlockedLevels : 1;
+    if (pendingStart != null && pendingStart >= 1 && pendingStart <= unlocked) {
+        void startGame(pendingStart);
+    }
 };
  function renderPlayerSprite() {
     const tier = Math.min(
@@ -1287,12 +1370,66 @@ function closeOtherMapHudOverlays(except) {
 function closeAllMapHudOverlays() {
     closeOtherMapHudOverlays(null);
 }
- window.openBestiary = () => {
+
+/** True while handling `/game?overlay=…` from React so we do not drop the return marker or clear it early. */
+let gOpeningMapOverlayFromUrlQuery = false;
+
+function tryReactReturnAfterMapOverlay() {
+    try {
+        const ret = sessionStorage.getItem(MB_REACT_RETURN_AFTER_OVERLAY_KEY);
+        if (!ret || !isSafeInternalAssignPath(ret)) return;
+        sessionStorage.removeItem(MB_REACT_RETURN_AFTER_OVERLAY_KEY);
+        window.location.assign(ret);
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+/** Opens map HUD overlays when landing from React with `?overlay=…`; strips the param. */
+function tryConsumeMapOverlayQuery() {
+    try {
+        const url = new URL(location.href);
+        const overlay = url.searchParams.get("overlay");
+        if (overlay !== "bestiary" && overlay !== "upgrades" && overlay !== "practice") return;
+        url.searchParams.delete("overlay");
+        const qs = url.searchParams.toString();
+        const next = url.pathname + (qs ? `?${qs}` : "") + url.hash;
+        history.replaceState(null, "", next);
+        if (overlay === "practice") {
+            gOpeningMapOverlayFromUrlQuery = true;
+            void window.openPracticeMode().finally(() => {
+                gOpeningMapOverlayFromUrlQuery = false;
+            });
+            return;
+        }
+        gOpeningMapOverlayFromUrlQuery = true;
+        try {
+            if (overlay === "bestiary") window.openBestiary();
+            else window.openUpgrades();
+        } finally {
+            gOpeningMapOverlayFromUrlQuery = false;
+        }
+    } catch (_) {
+        gOpeningMapOverlayFromUrlQuery = false;
+    }
+}
+
+window.openBestiary = () => {
+    if (!gOpeningMapOverlayFromUrlQuery) {
+        try {
+            sessionStorage.removeItem(MB_REACT_RETURN_AFTER_OVERLAY_KEY);
+        } catch (_) {
+            /* ignore */
+        }
+    }
     closeOtherMapHudOverlays("bestiary");
     document.getElementById("bestiary-overlay")?.classList.remove("hidden");
     renderBestiary();
 };
-window.closeBestiary = () => document.getElementById("bestiary-overlay")?.classList.add("hidden");
+window.closeBestiary = () => {
+    document.getElementById("bestiary-overlay")?.classList.add("hidden");
+    tryReactReturnAfterMapOverlay();
+};
  function renderBestiary() {
     const grid = document.getElementById("bestiary-grid");
     if (!grid) return;
@@ -1325,12 +1462,22 @@ window.closeBestiary = () => document.getElementById("bestiary-overlay")?.classL
         })
         .join("");
 }
- window.openUpgrades = () => {
+window.openUpgrades = () => {
+    if (!gOpeningMapOverlayFromUrlQuery) {
+        try {
+            sessionStorage.removeItem(MB_REACT_RETURN_AFTER_OVERLAY_KEY);
+        } catch (_) {
+            /* ignore */
+        }
+    }
     closeOtherMapHudOverlays("upgrades");
     document.getElementById("upgrades-overlay")?.classList.remove("hidden");
     renderUpgrades();
 };
-window.closeUpgrades = () => document.getElementById("upgrades-overlay")?.classList.add("hidden");
+window.closeUpgrades = () => {
+    document.getElementById("upgrades-overlay")?.classList.add("hidden");
+    tryReactReturnAfterMapOverlay();
+};
  function renderUpgrades() {
     safeSet("upgrades-shards", String(Math.max(0, Math.floor(state.shards || 0))));
     const list = document.getElementById("upgrades-list");
@@ -2863,6 +3010,11 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         "- ideal_explanation: 3–6 short sentences, clear steps.\n" +
         '- "text" and ideal_explanation: plain English only — no pipe tables, # headings, **, backticks, or ```; math as \\(...\\) only (no $$; no single-dollar math wraps). Lists: lines starting with "- ".\n' +
         "\n" +
+        "VERIFICATION (do this mentally before you output JSON; do not print this checklist in the JSON):\n" +
+        "- Read the stem literally: every number, unit, and the exact comparison or command (e.g. strictly greater vs at least vs not equal; simple vs conditional probability; which quantity is asked for).\n" +
+        "- Compute once, then re-check with a second pass (e.g. count sample points, plug back, or sanity bounds) so answer and ideal_explanation cannot contradict the stem.\n" +
+        "- answer must be exactly one string copied from options[] (identical characters and LaTeX).\n" +
+        "\n" +
         LLM_NO_MARKDOWN_IN_STRINGS +
         "\n\nReturn one JSON object with exactly these keys: topic_category, text, answer, ideal_explanation, visual_type, visual_spec, plotly_spec, type, options. No markdown, no code fences."
     );
@@ -2870,13 +3022,12 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
  async function fetchPracticeMcqViaDashScope({ previousStem = "" } = {}) {
     if (!canUseSecureAiBridge()) throw new Error("Secure AI bridge unavailable (Firebase Auth required)");
     const { dsModel } = getConfiguredAiKeys();
-    const systemMsg = {
-        role: "system",
-        content:
-            "You output exactly one valid JSON object and nothing else. No markdown, no code fences, no commentary. Use double quotes for JSON strings. " +
-            "For diagrams: visual_type gom + visual_spec for geometric schematics; visual_type plotly + plotly_spec (JSON string) for charts/bars/data; otherwise visual_type none with visual_spec null and plotly_spec empty. " +
-            LLM_NO_MARKDOWN_IN_STRINGS
-    };
+    const systemText =
+        "You output exactly one valid JSON object and nothing else. No markdown, no code fences, no commentary. Use double quotes for JSON strings. " +
+        "For diagrams: visual_type gom + visual_spec for geometric schematics; visual_type plotly + plotly_spec (JSON string) for charts/bars/data; otherwise visual_type none with visual_spec null and plotly_spec empty. " +
+        "Before returning JSON, re-read the stem and confirm answer and ideal_explanation satisfy the VERIFICATION rules in the user message. " +
+        LLM_NO_MARKDOWN_IN_STRINGS;
+    const systemMsg = { role: "system", content: systemText };
     const diff = state.currentLevel <= 3 ? "Introductory" : (state.currentLevel <= 6 ? "Grade 7" : "Grade 8");
     const seed = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const ctxIdx = pickSeededIndex(seed, "practice_mcq_ctx", MATH_BATTLE_CONTEXT_SEEDS.length);
@@ -2893,7 +3044,9 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
         `Loose context inspiration: ${contextHook}. Suggested strand: ${topicHint}. ` +
         `Keep it short and solvable quickly. Return JSON only. Use LaTeX for math.` +
         avoidRepeat;
-    const postPractice = async (suffix) => {
+    let practiceAttempt = 0;
+    const runPracticeMcqOnce = async (suffix) => {
+        practiceAttempt += 1;
         const userContent = basePrompt + dashScopePracticeMcqSuffix() + suffix;
         debugLogAiPrompt("dashscope.practice", userContent);
         const data = await callGenerateCombatQuestionWithBackoff(
@@ -2906,21 +3059,42 @@ function applyPedagogyLabelsToCombatQuestion(q, pedagogy) {
             },
             { min429DelayMs: 3500, maxDelayMs: 20000, initialDelayMs: 900 }
         );
-        if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
-        return data?.choices?.[0]?.message?.content;
+        if (data?.error) {
+            logPracticeMcqLlmTrace({
+                attempt: practiceAttempt,
+                model: dsModel,
+                systemText,
+                userContent,
+                rawAssistant: null,
+                apiError: data.error,
+                parseResult: null
+            });
+            throw new Error(data.error.message || JSON.stringify(data.error));
+        }
+        const content = data?.choices?.[0]?.message?.content;
+        const pv = parseAndValidate(PracticeMcqSchema, content, { lenient: true });
+        logPracticeMcqLlmTrace({
+            attempt: practiceAttempt,
+            model: dsModel,
+            systemText,
+            userContent,
+            rawAssistant: content,
+            apiError: null,
+            parseResult: pv
+        });
+        return { content, pv };
     };
-    let content = await postPractice("");
-    let pv = parseAndValidate(PracticeMcqSchema, content, { lenient: true });
+    let { pv } = await runPracticeMcqOnce("");
     if (!pv.ok) {
-        content = await postPractice(
+        ({ pv } = await runPracticeMcqOnce(
             "\n\nCRITICAL: Your previous output failed schema validation.\n" +
                 pv.issuesText +
                 "\n\nOutput ONLY one JSON object with keys topic_category, text, answer, ideal_explanation, visual_type, visual_spec, plotly_spec, type, options. type must be \"mcq\". Escape newlines in strings as \\n."
-        );
-        pv = parseAndValidate(PracticeMcqSchema, content, { lenient: true });
+        ));
     }
     if (!pv.ok) throw new Error(pv.issuesText || "practice MCQ schema invalid");
     finalizePracticeMcq(pv.data);
+    logPracticeMcqFinalizedQuestion(pv.data);
     return pv.data;
 }
  // --- INFINITE LEVEL BOSSES (levels > 10) ---
@@ -3104,6 +3278,13 @@ const GENERATED_BOSS_TOPICS = [
     }
 }
 window.openPracticeMode = async () => {
+    if (!gOpeningMapOverlayFromUrlQuery) {
+        try {
+            sessionStorage.removeItem(MB_REACT_RETURN_AFTER_OVERLAY_KEY);
+        } catch (_) {
+            /* ignore */
+        }
+    }
     closeOtherMapHudOverlays("practice");
     document.getElementById("practice-overlay")?.classList.remove("hidden");
     await nextPracticeQuestion();
@@ -3111,6 +3292,7 @@ window.openPracticeMode = async () => {
 window.closePracticeMode = () => {
     document.getElementById("practice-overlay")?.classList.add("hidden");
     practiceActiveQuestion = null;
+    tryReactReturnAfterMapOverlay();
 };
 window.nextPracticeQuestion = async () => {
     const myGen = ++practiceMcqFetchGeneration;
@@ -3514,8 +3696,10 @@ wireMapHudButtons();
 wireMapAudioControls();
 wireBgmVisibility();
 applyAudioFromState();
+applyReactBridgePrefill();
  loadRecentStems();
 state.bossCacheByLevel = loadBossCache();
 if (!isProductionUi()) runRegressions();
 initFirebase();
+tryConsumeMapOverlayQuery();
     

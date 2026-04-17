@@ -9,7 +9,8 @@
     "preview:web": "cd web && npm run preview",
     "build:css": "tailwindcss -i ./tailwind.input.css -o ./tailwind.css --minify",
     "validate-llm": "node scripts/validate-llm.mjs",
-    "test": "node --test scripts/test-ai-schemas.mjs test/*.test.mjs",
+    "test": "node scripts/run-root-tests.mjs",
+    "check": "npm test && cd web && npm run typecheck",
     "test:ai": "node --test scripts/test-ai-schemas.mjs",
     "serve": "node scripts/serve-static.mjs"
   },
