@@ -27,6 +27,13 @@ describe("strandShapeRequirement", () => {
 });
 
 describe("buildMypConstraintsBlock", () => {
+    it("uses on-ramp band for map level 1", () => {
+        const b = buildMypConstraintsBlock(1);
+        assert.ok(b.includes("On-ramp"));
+        assert.ok(b.includes("map level 1"));
+        assert.ok(b.includes("CURRICULUM"));
+    });
+
     it("includes band label for low levels", () => {
         const b = buildMypConstraintsBlock(2);
         assert.ok(b.includes("Foundations"));

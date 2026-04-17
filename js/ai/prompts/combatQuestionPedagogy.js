@@ -264,17 +264,38 @@ export function strandShapeRequirement(topic) {
 }
 
 export function buildMypConstraintsBlock(level) {
-    const band =
-        level <= 3 ? "Foundations (early Year 7 readiness)" : level <= 6 ? "IB MYP Year 7" : "IB MYP Year 8";
+    const lv = Number.isFinite(level) && level >= 1 ? Math.floor(level) : 1;
+    const outOfScope = [
+        "calculus (derivatives/integrals/limits)",
+        "trigonometry (sin/cos/tan)",
+        "quadratic formula / completing the square as a main skill",
+        "simultaneous equations beyond very simple intuition",
+        "logarithms"
+    ];
+    if (lv <= 1) {
+        return (
+            `\n\nCURRICULUM CONSTRAINTS (must follow):\n` +
+            `- Target band: On-ramp (map level 1 — first quest node; confidence-building, ~ages 10–12).\n` +
+            `- One primary skill only: a single clear calculation, one substitution with given values, or one short pattern read-off. Do not combine two unrelated skills in one stem.\n` +
+            `- Prefer whole numbers 0–30; if a fraction appears, use unit fractions or denominators ≤ 8 only. Avoid percent stacked with fraction conversion in the same item.\n` +
+            `- Keep the stem short (aim ≤ ~90 words). No chained discounts, no “compare three plans/rates”, no three-stage modelling stories.\n` +
+            `- If criterion D requires context, at most ONE modelling decision with all given numbers ≤ 30 and one clear question.\n` +
+            `- Allowed: counting or simple compare; +/− within 30; ×/÷ within small times-table facts; one-step equations with positive integer coefficients ≤ 12; perimeter/area with whole sides ≤ 12; reading a 3–4 row pattern or table.\n` +
+            `- Keep the problem within primary/middle Years 5–7 intuition — err easy; this is the player’s first boss.\n` +
+            `- Explicitly avoid: ${outOfScope.join(", ")}.\n` +
+            `- Use simple command terms ("find", "calculate", "how many", "what is the next"). Reading level ~age 10–11.\n`
+        );
+    }
+    const band = lv <= 3 ? "Foundations (early Year 7 readiness)" : lv <= 6 ? "IB MYP Year 7" : "IB MYP Year 8";
     const allowedByBand =
-        level <= 3
+        lv <= 3
             ? [
                   "integer operations, order of operations, simple fractions/decimals/percent basics",
                   "one-step and simple two-step linear equations in one variable",
                   "simple patterns and substitution (evaluate an expression for a given value)",
                   "simple perimeter/area with whole-number dimensions"
               ]
-            : level <= 6
+            : lv <= 6
               ? [
                     "linear expressions and equations; solving and checking solutions",
                     "fractions/decimals/percent conversions and problems in context",
@@ -287,13 +308,6 @@ export function buildMypConstraintsBlock(level) {
                     "intro to functions as input/output; reading simple graphs (no advanced curve fitting)",
                     "basic statistics: mean/median/mode; simple data displays and interpretation"
                 ];
-    const outOfScope = [
-        "calculus (derivatives/integrals/limits)",
-        "trigonometry (sin/cos/tan)",
-        "quadratic formula / completing the square as a main skill",
-        "simultaneous equations beyond very simple intuition",
-        "logarithms"
-    ];
     return (
         `\n\nCURRICULUM CONSTRAINTS (must follow):\n` +
         `- Target band: ${band}. Use this level to set difficulty.\n` +
@@ -352,9 +366,23 @@ export function buildCombatQuestionUserPrompt(params) {
     const mapLevel =
         Number.isFinite(params.mapLevel) && params.mapLevel >= 1 ? Math.floor(params.mapLevel) : 1;
     const easier = params.forceEasierNextQuestion === true;
-    const diff = easier ? "Introductory" : mapLevel <= 3 ? "Introductory" : mapLevel <= 6 ? "Grade 7" : "Grade 8";
+    const diff = easier
+        ? "Introductory"
+        : mapLevel <= 1
+          ? "On-ramp (level 1)"
+          : mapLevel <= 3
+            ? "Introductory"
+            : mapLevel <= 6
+              ? "Grade 7"
+              : "Grade 8";
     const difficultyFromLevel =
-        mapLevel <= 3 ? "Introductory (map levels 1–3)" : mapLevel <= 6 ? "Grade 7 (map levels 4–6)" : "Grade 8 (map level 7+)";
+        mapLevel <= 1
+            ? "On-ramp (map level 1)"
+            : mapLevel <= 3
+              ? "Introductory (map levels 2–3)"
+              : mapLevel <= 6
+                ? "Grade 7 (map levels 4–6)"
+                : "Grade 8 (map level 7+)";
     const difficultyCalculationLine = easier
         ? `Difficulty label is Introductory because the player is on a remedial/easier question this round (potion or struggle path) — use Foundations-style tasks even if map level is ${mapLevel}.`
         : `Difficulty label follows map level: level ${mapLevel} → ${difficultyFromLevel.split("(")[0].trim()}.`;
@@ -409,11 +437,19 @@ export function buildCombatQuestionUserPrompt(params) {
     const criterionTitle = MYP_CRITERION_TITLES[targetCriterion] || MYP_CRITERION_TITLES.A;
     const levelForBand = easier ? 1 : mapLevel;
     const targetBandLabel =
-        levelForBand <= 3
-            ? "Foundations (early Year 7 readiness)"
-            : levelForBand <= 6
-              ? "IB MYP Year 7"
-              : "IB MYP Year 8";
+        levelForBand <= 1
+            ? "On-ramp (map level 1 — first quest)"
+            : levelForBand <= 3
+              ? "Foundations (early Year 7 readiness)"
+              : levelForBand <= 6
+                ? "IB MYP Year 7"
+                : "IB MYP Year 8";
+    const gradeBandReadingNote =
+        levelForBand <= 1 ? " (aim reading load ~age 10–12; err easy)." : " (typical ages ~12–14).";
+    const level1Guardrails =
+        mapLevel <= 1 && !easier
+            ? `- Level 1 on-ramp (strict): one main mathematical move; integers 0–30 when possible; stem about ≤90 words; no multi-rate or “pick the best of three deals” setups.\n`
+            : "";
 
     const critFocus = criterionFocusBlock(targetCriterion);
 
@@ -425,7 +461,7 @@ Role: IB MYP math examiner + snarky dungeon master for ages 11–13.
 - Topic Syllabus: ${chosenTopic}
 - Target MYP Criterion: Criterion ${targetCriterion} (${criterionTitle})
 - Task Directive: Look at Section 7 of your instructions. You MUST design this question specifically to test Criterion ${targetCriterion} skills using the topic of ${chosenTopic}.
-- Grade Band: ${targetBandLabel} (typical ages ~12–14).
+- Grade Band: ${targetBandLabel}${gradeBandReadingNote}
 
 # CRITERION SUCCESS CONTRACT (follow exactly)
 ${critFocus}
@@ -436,7 +472,7 @@ Combat (follow HARD REQUIREMENTS at the end for JSON keys and diagram rules in s
 - Hero evolution tier (staff upgrades, 0–5): ${cosmeticsTier}. Higher tiers → more wary or respectful opening taunt; lower tiers → cockier or dismissive. Stay consistent with the creative sparks below.
 - Addressee: ${heroNameJson ? `${heroNameJson} — address by this exact string at least once in the taunt.` : "Hero name unset — use you/your only."}
 - Map level: ${mapLevel} · Display difficulty: ${diff} (${difficultyCalculationLine})
-- ${topicPedagogyExplanation}
+${level1Guardrails}- ${topicPedagogyExplanation}
 - Rotation slot index (coverage reference): ${rotationTopic} (strandRotationSeq mod 7).
 - topic_category for this question (verbatim): ${JSON.stringify(chosenTopic)} — syllabus label only, not ${JSON.stringify(enemyName)}’s name (no “Algebras” swarms).
 - Strand shape (math must match, not just the label): ${strandShapeRequirement(chosenTopic)}

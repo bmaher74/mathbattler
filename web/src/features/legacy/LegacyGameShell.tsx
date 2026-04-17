@@ -1,9 +1,13 @@
 import { useLayoutEffect, useRef } from "react";
-import bodyContent from "./legacy/bodyContent.html?raw";
+import bodyContent from "@/legacy/bodyContent.html?raw";
 
 let legacyMainAttached = false;
 
-export default function App() {
+/**
+ * Injects the legacy `index.html` body markup and loads `js/main.js` as a module.
+ * Kept behind React Router as the `*` route so future screens can mount beside or instead of this shell.
+ */
+export default function LegacyGameShell() {
     const ref = useRef<HTMLDivElement>(null);
 
     useLayoutEffect(() => {

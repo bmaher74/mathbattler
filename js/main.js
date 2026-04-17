@@ -1,4 +1,6 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+// Legacy entry must load Firebase from one origin: bare `firebase/*` + import maps (e.g. esm.sh)
+// can split `@firebase/*` across chunks and trigger "Component auth has not been registered yet".
+import { getApp, getApps, initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { callGenerateCombatQuestionWithBackoff, callGenerateCombatQuestion } from "./ai/gemini.js";
@@ -1080,7 +1082,8 @@ function setRegressionVaultSkipped() {
      await runAiApiRegression();
 }
  async function connectFirebaseAndSeedRegression() {
-    const app = initializeApp(JSON.parse(__firebase_config));
+    const config = JSON.parse(__firebase_config);
+    const app = getApps().length > 0 ? getApp() : initializeApp(config);
     auth = getAuth(app);
     functionsApi = getFunctions(app, "us-central1");
     callVaultHealthcheck = httpsCallable(functionsApi, "vaultHealthcheck");

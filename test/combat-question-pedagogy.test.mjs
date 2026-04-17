@@ -126,4 +126,19 @@ describe("buildCombatQuestionUserPrompt", () => {
         });
         assert.match(b.prompt, /Hero evolution tier[^\n]*: 4/);
     });
+
+    it("uses on-ramp difficulty copy for map level 1", () => {
+        const b = buildCombatQuestionUserPrompt({
+            mapLevel: 1,
+            turnIndex: 0,
+            skillProfile: null,
+            strandRotationSeq: 0,
+            playerName: "Test",
+            enemyName: "Slime",
+            cosmeticsTier: 0
+        });
+        assert.match(b.prompt, /On-ramp \(level 1\)/);
+        assert.match(b.prompt, /Level 1 on-ramp \(strict\)/);
+        assert.match(b.prompt, /err easy/);
+    });
 });
