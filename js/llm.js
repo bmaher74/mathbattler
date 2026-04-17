@@ -1,3 +1,4 @@
+import { QUEST_ROUTE } from "./game/constants.js";
 import { state, safeSet, MAX_RECENT_STEMS, normalizeQuestionStem, rememberQuestionStem } from "./state.js";
 import {
     MAX_COSMETIC_TIER,

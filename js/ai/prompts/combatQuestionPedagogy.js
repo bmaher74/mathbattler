@@ -13,7 +13,7 @@ import {
 
 /** Strands used for topic interleaving (must stay in sync with prompts and profile UI). */
 /**
- * Map node enemy names (keep in sync with QUEST_ROUTE in js/main.js).
+ * Map node enemy names (keep in sync with QUEST_ROUTE in js/game/constants.js).
  * Used only for prompt flavour; topic rotation comes from strandRotationSeq.
  */
 export const QUEST_ENEMY_NAMES = [

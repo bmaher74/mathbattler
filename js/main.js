@@ -47,6 +47,19 @@ import {
     BOSS_CACHE_LS_KEY,
     BOSS_CACHE_SCHEMA_VERSION
 } from "./state.js";
+import {
+    COMBAT_BOSS_HP,
+    COMBAT_COMBO_MULT,
+    QUEST_ROUTE,
+    EP_SHARD_LOSS_BATTLE,
+    EP_SHARD_FIRST_CAST,
+    EP_SHARD_PRACTICE,
+    EP_PRACTICE_DAILY_CAP,
+    EP_SHARD_REFLECTION,
+    EP_SHARD_DAILY_QUEST_BATTLE,
+    EP_SHARD_LOGIN,
+    EP_STREAK_MILESTONE_SHARDS
+} from "./game/constants.js";
 
 import { proseWithMathToHtml, escapeHtmlText } from "./ai/displayMathProse.js";
 import { parseAndValidate, extractJsonFromModelText, parseJsonLenient } from "./ai/parseModelJson.js";
@@ -100,25 +113,8 @@ function isProductionUi() {
     return !!window.__mathbattler_production_ui__;
 }
 
-/** Boss fight length tuning: ~four solid hits at base damage to win (criterion A–D pacing). */
-const COMBAT_BOSS_HP = 100;
-const COMBAT_COMBO_MULT = 1.25;
-
  // --- ACTIVE INVARIANTS (THE BLACK BOX) ---
 // Assets are anchored with specific IDs for regression tests to monitor detail levels.
-/** Map layout (viewBox coords): level 1 at top, higher levels lower on the page. */
-const QUEST_ROUTE = [
-    { x: 180, y: 142, name: "Algebra Slime", blurb: "Variables & expressions", hue: "#22c55e" },
-    { x: 92, y: 232, name: "Fraction Golem", blurb: "Parts & wholes", hue: "#ea580c" },
-    { x: 268, y: 322, name: "Percentile Parasite", blurb: "Percent & change", hue: "#fb7185" },
-    { x: 88, y: 412, name: "Fibonacci Serpent", blurb: "Patterns & rules", hue: "#34d399" },
-    { x: 272, y: 502, name: "Geo-Dragon", blurb: "Shapes & coordinates", hue: "#c4b5fd" },
-    { x: 96, y: 592, name: "Matrix Minotaur", blurb: "Systems & structure", hue: "#fdba74" },
-    { x: 264, y: 682, name: "Probability Wraith", blurb: "Chance & data", hue: "#93c5fd" },
-    { x: 100, y: 772, name: "Velocity Vanguard", blurb: "Modeling & rates", hue: "#fde68a" },
-    { x: 260, y: 852, name: "Axiom Sentinel", blurb: "Truth & precision", hue: "#facc15" },
-    { x: 180, y: 932, name: "Logic Leviathan", blurb: "Final trial", hue: "#a5b4fc" }
-];
  function getQuestNode(level) {
     if (level <= QUEST_ROUTE.length) {
         const i = (level - 1) % QUEST_ROUTE.length;
@@ -402,15 +398,6 @@ function safeProfileDocId(displayName) {
     if (good) state.skillProfile[topic].corrects += 1;
     if (state.playerName) saveLocalProfile(state.playerName);
 }
-// --- ENGAGEMENT / RETENTION (participation shards, streaks, daily quest) ---
-const EP_SHARD_LOSS_BATTLE = 5;
-const EP_SHARD_FIRST_CAST = 2;
-const EP_SHARD_PRACTICE = 1;
-const EP_PRACTICE_DAILY_CAP = 8;
-const EP_SHARD_REFLECTION = 3;
-const EP_SHARD_DAILY_QUEST_BATTLE = 5;
-const EP_SHARD_LOGIN = 2;
-const EP_STREAK_MILESTONE_SHARDS = { 3: 8, 7: 20, 14: 40 };
 
 function localDateISO() {
     const d = new Date();

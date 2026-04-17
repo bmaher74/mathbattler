@@ -1,0 +1,247 @@
+    <!-- REGRESSION MONITOR -->
+    <div id="test-panel" class="fixed top-0 left-0 right-0 bg-black bg-opacity-95 text-[9px] font-mono p-1 flex gap-3 overflow-x-auto z-[200] border-b border-gray-700">
+        <span class="text-yellow-500 font-bold uppercase px-2 border-r border-gray-700">System Integrity:</span>
+        <div id="test-results" class="flex gap-4">
+            <span id="t-visuals">Visuals: Wait</span>
+            <span id="t-logic">MathJax: Wait</span>
+            <span id="t-vault">Vault: Wait</span>
+            <span id="t-scroll">Scroll: Wait</span>
+            <span id="t-brendan">Brendan: Wait</span>
+            <span id="t-ai">AI: Wait</span>
+            <span id="t-prompts">Prompts: Wait</span>
+            <span id="t-bosses">Bosses: Wait</span>
+        </div>
+    </div>
+
+    <!-- MAIN UI SCREENS -->
+    <div id="login-screen" class="flex-1 flex flex-col items-center justify-center p-6 absolute inset-0 bg-gray-900 z-[100]">
+        <h1 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 mb-8 uppercase tracking-tighter italic">Math Battler</h1>
+        <div class="bg-gray-800 p-8 rounded-2xl border-4 border-gray-700 w-full max-w-sm shadow-2xl">
+            <input type="text" id="player-name-input" placeholder="Student Brendan" class="w-full bg-gray-900 border-2 border-gray-600 rounded-lg px-4 py-4 text-xl mb-4 text-center font-bold">
+            <button id="login-btn" onclick="handleLogin()" disabled class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-lg font-black text-xl uppercase transition-all disabled:opacity-50">Connecting...</button>
+            <div id="cloud-status-msg" class="mt-4 text-[10px] text-gray-500 font-mono text-center uppercase">Checking cloud connection…</div>
+        </div>
+    </div>
+
+    <!-- Cloud sync (map + battle); click = non-blocking reconcile -->
+    <button type="button" id="cloud-sync-badge" class="hidden fixed left-2 sm:left-3 top-12 sm:top-14 z-[120] max-w-[min(100vw-1rem,14rem)] flex items-center gap-2 rounded-lg border border-slate-600/90 bg-slate-900/95 px-2.5 py-1.5 text-left shadow-lg backdrop-blur-sm transition hover:border-sky-500/70 hover:bg-slate-800/95 focus:outline-none focus:ring-2 focus:ring-sky-500/50" title="Cloud sync — click to sync now" aria-live="polite">
+        <span id="cloud-sync-badge-icon" class="shrink-0 text-base" aria-hidden="true">☁</span>
+        <span class="min-w-0 flex flex-col leading-tight">
+            <span id="cloud-sync-badge-line1" class="text-[10px] sm:text-xs font-bold text-slate-200 truncate">Save</span>
+            <span id="cloud-sync-badge-line2" class="text-[9px] sm:text-[10px] text-slate-500 truncate">…</span>
+        </span>
+    </button>
+
+    <div id="engagement-toast" class="hidden opacity-0 fixed top-14 left-1/2 -translate-x-1/2 z-[280] max-w-[min(92vw,24rem)] rounded-xl border border-emerald-600/70 bg-emerald-950/95 px-4 py-2.5 text-center text-xs sm:text-sm font-bold text-emerald-100 shadow-xl pointer-events-none transition-opacity duration-300" role="status"></div>
+
+    <div id="ai-questions-status" class="fixed right-2 sm:right-3 top-12 sm:top-14 z-[119] max-w-[min(100vw-1rem,15rem)] rounded-lg border border-slate-600/90 bg-slate-900/95 px-2.5 py-1.5 shadow-lg backdrop-blur-sm" title="" aria-live="polite">
+        <span class="flex flex-col leading-tight min-w-0">
+            <span class="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide text-slate-500">Questions</span>
+            <span id="ai-status-line2" class="text-[10px] sm:text-xs font-bold text-slate-200 truncate">Checking…</span>
+        </span>
+    </div>
+
+    <div id="level-screen" class="hidden absolute inset-0 z-50 flex flex-col bg-slate-950 pt-14 sm:pt-16 min-h-0">
+        <div class="shrink-0 relative z-30 flex flex-wrap justify-between items-center gap-3 px-4 sm:px-6 w-full max-w-4xl mx-auto pb-3 pointer-events-auto bg-slate-950/95">
+            <div class="bg-slate-900/90 border-2 border-indigo-500/80 px-3 sm:px-4 py-2 rounded-2xl font-bold text-sm sm:text-base shadow-lg shadow-indigo-900/40 min-w-0 max-w-full flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                <span class="shrink-0"><span class="text-slate-400">Hero:</span> <span id="welcome-player-text" class="text-indigo-300"></span></span>
+                <span id="player-flair-badges" class="player-flair-badges min-w-0" aria-label="Earned titles"></span>
+            </div>
+            <div class="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                <div class="map-shards-pill flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-amber-700/60 bg-amber-950/40 text-amber-200 text-[10px] sm:text-xs font-black uppercase shrink-0" title="Logic Shards">
+                    <span class="whitespace-nowrap">Shards</span>
+                    <span id="shards-count" class="text-amber-100 tabular-nums"></span>
+                </div>
+                <button type="button" id="map-btn-bestiary" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Bestiary</button>
+                <button type="button" id="map-btn-upgrades" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Upgrades</button>
+                <button type="button" id="map-btn-practice" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Practice (MCQ)</button>
+                <button type="button" id="map-btn-logout" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700 shrink-0">Logout</button>
+            </div>
+            <div class="w-full flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-6 pb-2 border-b border-slate-800/50 bg-slate-950/80" id="map-audio-panel" aria-label="Volume and mute">
+                <span class="text-[10px] font-black uppercase tracking-wider text-slate-500 shrink-0">Audio</span>
+                <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1 sm:flex-initial">
+                    <span class="text-[10px] text-slate-400 shrink-0 w-8">Music</span>
+                    <button type="button" id="map-audio-music-mute" class="shrink-0 w-9 h-9 rounded-lg border border-slate-600 bg-slate-800 text-lg leading-none hover:bg-slate-700" aria-label="Mute music">🔊</button>
+                    <input type="range" id="map-audio-music-slider" min="0" max="100" value="100" class="flex-1 min-w-[96px] max-w-[220px] accent-indigo-400 h-2" aria-label="Music volume" />
+                </div>
+                <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1 sm:flex-initial">
+                    <span class="text-[10px] text-slate-400 shrink-0 w-8">SFX</span>
+                    <button type="button" id="map-audio-sfx-mute" class="shrink-0 w-9 h-9 rounded-lg border border-slate-600 bg-slate-800 text-lg leading-none hover:bg-slate-700" aria-label="Mute sound effects">🔊</button>
+                    <input type="range" id="map-audio-sfx-slider" min="0" max="100" value="100" class="flex-1 min-w-[96px] max-w-[220px] accent-indigo-400 h-2" aria-label="Sound effects volume" />
+                </div>
+            </div>
+        </div>
+        <div class="shrink-0 px-4 sm:px-6 pt-2 pb-4 text-center max-w-xl mx-auto w-full border-b border-slate-800/80 bg-slate-950/50">
+            <h2 class="text-2xl sm:text-3xl font-black text-amber-200 tracking-tight drop-shadow-[0_0_12px_rgba(253,230,138,0.35)]">Math Quest</h2>
+            <p class="text-slate-400 text-sm sm:text-base mt-2 leading-snug px-2">Start at level 1 above. Higher levels lie further down the path.</p>
+            <p id="ai-route-notice" class="hidden mt-2 mx-auto max-w-lg text-[12px] sm:text-sm text-amber-200/95 bg-amber-950/50 border border-amber-700/60 rounded-lg px-3 py-2 leading-snug" role="status"></p>
+            <p id="map-question-buffer-hint" class="text-[11px] text-slate-500 mt-1 px-2" aria-live="polite"></p>
+            <div id="map-engagement-strip" class="mt-2 flex flex-col sm:flex-row flex-wrap gap-1 sm:gap-4 justify-center items-center text-[11px] sm:text-xs text-slate-400 px-2" aria-live="polite">
+                <span id="map-streak-line" class="font-bold text-sky-200/90"></span>
+                <span id="map-daily-quest-line" class="font-bold text-amber-200/80"></span>
+            </div>
+        </div>
+        <div class="quest-map-wrap flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar px-2 sm:px-4 pb-8 flex justify-center min-h-0">
+            <div id="levels-container" class="w-full max-w-lg sm:max-w-xl py-3"></div>
+        </div>
+    </div>
+
+    <div id="battle-screen" class="hidden flex-1 min-h-0 flex flex-col bg-gray-900 relative w-full max-w-2xl mx-auto border-x border-gray-700 overflow-hidden">
+        <div id="battle-arena" class="flex-1 min-h-0 flex flex-col relative bg-slate-900 bg-opacity-20 overflow-hidden">
+            <div id="combo-badge" class="hidden absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full border border-sky-400/60 bg-slate-900/80 text-sky-200 font-black uppercase tracking-wide text-xs shadow-lg">
+                Combo x3 — damage boosted
+            </div>
+            <div id="battle-impact-flash" class="pointer-events-none absolute inset-0 z-[28] opacity-0 battle-impact-flash-base" aria-hidden="true"></div>
+            <div id="judge-duel-projectiles" class="judge-duel-projectiles" aria-hidden="true">
+                <div class="judge-bolt-layer judge-bolt-layer--hero">
+                    <span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span><span class="judge-bolt judge-bolt--hero"></span>
+                </div>
+                <div class="judge-bolt-layer judge-bolt-layer--enemy">
+                    <span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span><span class="judge-bolt judge-bolt--enemy"></span>
+                </div>
+                <div class="judge-spark-layer">
+                    <span class="judge-spark"></span><span class="judge-spark"></span><span class="judge-spark"></span><span class="judge-spark"></span><span class="judge-spark"></span><span class="judge-spark"></span>
+                </div>
+            </div>
+            <!-- ENEMY AREA -->
+            <div class="flex-1 flex flex-col items-center justify-end pb-6 relative">
+                <div id="enemy-damage" class="damage-text top-10 right-4"></div>
+                <div class="absolute top-10 right-4 bg-gray-900 border border-red-500 p-2 rounded w-[min(100%,13.5rem)] max-w-[15rem] z-10 shadow-lg">
+                    <div class="flex justify-between text-[10px] font-black text-red-400 uppercase"><span id="enemy-name"></span><span>Lv <span id="enemy-lvl-display"></span></span></div>
+                    <div class="w-full bg-gray-800 h-1.5 mt-1 rounded-full overflow-hidden"><div id="enemy-hp-bar" class="health-fill bg-red-500 h-full w-full"></div></div>
+                    <p id="enemy-taunt" class="text-[9px] sm:text-[10px] text-rose-100/95 font-bold leading-snug mt-2 min-h-[2.5rem] border-t border-red-900/60 pt-1.5 italic" aria-live="polite"></p>
+                </div>
+                <div id="enemy-sprite" class="w-40 h-40 flex items-center justify-center"></div>
+            </div>
+            <!-- PLAYER AREA -->
+            <div class="flex-1 flex flex-col items-center justify-start pt-6 relative border-t border-gray-800">
+                <div id="player-damage" class="damage-text top-10 left-4"></div>
+                <div id="player-sprite" class="w-44 h-44 sm:w-48 sm:h-48 flex items-center justify-center overflow-visible drop-shadow-2xl"></div>
+                <div class="absolute bottom-6 left-4 bg-gray-900 border border-blue-500 p-2 rounded w-40 z-10 shadow-xl">
+                    <div class="flex justify-between text-[10px] font-black text-blue-400 uppercase"><span>Math Wizard</span><span>HP</span></div>
+                    <div class="w-full bg-gray-800 h-1.5 mt-1 rounded-full overflow-hidden"><div id="player-hp-bar" class="health-fill bg-blue-500 h-full w-full"></div></div>
+                </div>
+            </div>
+            <div id="combat-feedback" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 bg-gray-900 border-2 border-white p-4 rounded-xl text-center z-40 opacity-0 pointer-events-none transition-all"></div>
+        </div>
+        <!-- INTERACTION PANEL: fixed fraction of battle height; scrolls when stem + form exceed it -->
+        <div id="interaction-panel" class="shrink-0 h-[45%] min-h-0 bg-gray-900 border-t-4 border-gray-700 flex flex-col p-4 overflow-y-auto overflow-x-hidden custom-scrollbar overscroll-y-contain">
+            <div id="question-source-badge" class="hidden mb-2 shrink-0 text-center text-xs font-bold uppercase tracking-wide text-amber-300 border border-amber-600/60 bg-amber-950/40 rounded-lg py-1.5 px-2" title=""></div>
+            <div id="question-text" class="shrink-0 text-lg sm:text-xl font-bold text-yellow-300 text-center mb-4 min-h-[3rem]"></div>
+            <div id="question-visual-container" class="hidden w-full max-w-md mx-auto mb-3 shrink-0" aria-hidden="true"></div>
+            <div id="action-area" class="flex flex-col shrink-0">
+                <div id="mcq-grid" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3 pb-8"></div>
+                <form id="answer-form" class="flex flex-col gap-2" onsubmit="handleInputAttack(event)">
+                    <button type="button" onclick="analyzeEnemy()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-black uppercase hover:bg-slate-700 self-center">Analyze Enemy</button>
+                    <textarea id="answer-input" rows="4" class="w-full bg-gray-800 border-2 border-gray-700 rounded p-3 text-white focus:border-blue-500 outline-none" placeholder="Type your full response: include your final answer and 2–5 steps of reasoning."></textarea>
+                    <button id="cast-spell-btn" type="submit" class="bg-red-600 py-3 rounded font-bold uppercase hover:bg-red-500">Cast Spell</button>
+                    <div class="text-[10px] text-slate-500 leading-snug">
+                        Tip: Write 2–5 steps and a final sentence like “Therefore, …”.
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- VS encounter: full viewport. z-[270] — above battle column, below result-overlay (300). -->
+    <div id="vs-encounter-overlay" class="hidden fixed inset-0 z-[270] flex flex-col items-center justify-center pointer-events-auto bg-[#05080f]" aria-hidden="true">
+        <div id="vs-encounter-flash" class="vs-encounter-flash-layer pointer-events-none" aria-hidden="true"></div>
+        <div class="vs-encounter-vs-pill pointer-events-none" aria-hidden="true">VS</div>
+        <div class="vs-encounter-stage flex flex-row items-center justify-center gap-2 sm:gap-6 w-full max-w-[min(100vw,56rem)] px-2 sm:px-4 flex-1 min-h-0">
+            <div id="vs-portrait-hero" class="vs-portrait vs-portrait--hero flex items-center justify-center overflow-hidden rounded-2xl border-4 border-sky-500/80 bg-slate-950 shadow-[0_0_32px_rgba(56,189,248,0.35)]"></div>
+            <div id="vs-portrait-boss" class="vs-portrait vs-portrait--boss flex items-center justify-center overflow-hidden rounded-2xl border-4 border-red-500/80 bg-slate-950 shadow-[0_0_32px_rgba(248,113,113,0.35)]"></div>
+        </div>
+        <p id="vs-taunt-line" class="vs-taunt-text px-4 pb-10 sm:pb-14 text-center font-black uppercase tracking-wide text-amber-100/95 max-w-[min(96vw,36rem)] min-h-[3.5rem]"></p>
+    </div>
+
+    <!-- Judge charging: flavor text while AI grades (shown over battle; z below VS overlay). -->
+    <div id="judge-charging-overlay" class="hidden fixed inset-x-0 bottom-0 z-[265] pointer-events-none flex flex-col items-center justify-end px-4 pb-[min(28vh,14rem)]" aria-hidden="true">
+        <div id="judge-charging-flavor" class="rounded-xl border border-indigo-500/60 bg-slate-950/95 px-4 py-2.5 text-center text-sm sm:text-base font-bold text-indigo-100 shadow-lg max-w-md"></div>
+    </div>
+
+    <!-- OVERLAYS -->
+    <div id="detailed-feedback-overlay" class="hidden fixed inset-0 bg-black bg-opacity-95 z-[200] flex flex-col items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div class="bg-gray-800 border-2 border-green-500 p-4 sm:p-6 rounded-2xl max-w-xl w-full max-h-[min(92dvh,920px)] shadow-2xl flex flex-col gap-4 my-3 sm:my-4 min-h-0">
+            <h3 class="text-3xl font-black text-green-400 uppercase tracking-tighter text-center shrink-0">Solution</h3>
+            <div id="personalized-feedback" class="bg-gray-900 p-4 rounded border border-gray-700 italic text-yellow-200 shrink-0"></div>
+            <div id="ideal-explanation" class="bg-black p-4 rounded border border-gray-700 text-sm overflow-x-auto max-h-[min(28vh,200px)] overflow-y-auto shrink-0"></div>
+            <div id="plot-container" class="hidden w-full max-w-full rounded-lg border border-gray-600 bg-gray-950/80 shrink-0"></div>
+            <div id="reflection-wrap" class="hidden shrink-0 border border-slate-700 rounded-xl bg-slate-950/40 p-3">
+                <div class="text-xs font-black uppercase text-slate-200">Parry Reflection</div>
+                <div class="text-[11px] text-slate-400 mt-1">Type what went wrong in your logic. A good reflection can parry the next enemy hit.</div>
+                <textarea id="reflection-input" rows="3" class="mt-2 w-full bg-slate-900 border border-slate-700 rounded p-2 text-slate-100 text-sm outline-none focus:border-sky-500" placeholder="Example: I used the wrong denominator / I forgot order of operations / I didn’t show my steps."></textarea>
+            </div>
+            <button id="solution-continue-btn" onclick="closeDetailedFeedback()" class="w-full bg-green-600 hover:bg-green-500 py-4 rounded-xl font-black uppercase text-xl shrink-0">Continue</button>
+        </div>
+    </div>
+
+    <div id="result-overlay" class="hidden fixed inset-0 bg-black bg-opacity-90 z-[300] flex flex-col items-center justify-center p-6 text-center">
+        <h2 id="result-title" class="text-6xl font-black mb-4 uppercase italic tracking-tighter text-yellow-400">Victory</h2>
+        <p id="result-desc" class="text-2xl mb-8 opacity-80"></p>
+        <button onclick="returnToMenu()" class="bg-blue-600 px-12 py-4 rounded-full font-black text-2xl uppercase hover:scale-105 transition-transform shadow-2xl">Return to Map</button>
+    </div>
+
+    <!-- BESTIARY -->
+    <div id="bestiary-overlay" class="hidden fixed inset-0 bg-black/80 z-[260] flex items-center justify-center p-4">
+        <div class="w-full max-w-3xl bg-slate-950 border border-slate-700 rounded-2xl shadow-2xl p-4 sm:p-6 max-h-[min(92dvh,940px)] overflow-hidden flex flex-col min-h-0">
+            <div class="flex items-start justify-between gap-3 shrink-0">
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-slate-400 font-bold">Bestiary</div>
+                    <div class="text-lg sm:text-xl font-black text-slate-100">Defeated Bosses</div>
+                    <div class="text-[12px] text-slate-400 mt-1">Unlock monsters by defeating them.</div>
+                </div>
+                <button type="button" onclick="closeBestiary()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Close</button>
+            </div>
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-y-auto custom-scrollbar pr-1 min-h-0" id="bestiary-grid"></div>
+        </div>
+    </div>
+
+    <!-- UPGRADES / SHOP -->
+    <div id="upgrades-overlay" class="hidden fixed inset-0 bg-black/80 z-[260] flex items-center justify-center p-4">
+        <div class="w-full max-w-xl bg-slate-950 border border-slate-700 rounded-2xl shadow-2xl p-4 sm:p-6 max-h-[min(92dvh,860px)] overflow-hidden flex flex-col min-h-0">
+            <div class="flex items-start justify-between gap-3 shrink-0">
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-slate-400 font-bold">Upgrades</div>
+                    <div class="text-lg sm:text-xl font-black text-slate-100">Spend Logic Shards</div>
+                    <div class="text-[12px] text-slate-400 mt-1">Five evolution stages (I–V): your staff grows deadlier and deals more damage to bosses.</div>
+                </div>
+                <button type="button" onclick="closeUpgrades()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Close</button>
+            </div>
+            <div class="mt-4 flex items-center justify-between rounded-xl border border-amber-700/60 bg-amber-950/40 px-4 py-3 shrink-0">
+                <div class="text-xs font-black uppercase text-amber-200">Shards</div>
+                <div id="upgrades-shards" class="text-lg font-black text-amber-100"></div>
+            </div>
+            <div class="mt-4 space-y-3 overflow-y-auto custom-scrollbar pr-1 min-h-0" id="upgrades-list"></div>
+        </div>
+    </div>
+
+    <div id="upgrade-celebration" class="hidden fixed inset-0 z-[290] flex items-center justify-center p-4 bg-black/85 pointer-events-none opacity-0 upgrade-celebration-root" aria-live="polite">
+        <div class="upgrade-celebration-burst pointer-events-none" aria-hidden="true"></div>
+        <div class="relative z-10 flex flex-col items-center max-w-sm w-full upgrade-celebration-card">
+            <div class="text-[11px] font-black uppercase tracking-[0.35em] text-amber-300/90 mb-2 drop-shadow-lg">Upgrade acquired</div>
+            <div id="upgrade-celebration-art" class="w-48 h-48 sm:w-56 sm:h-56 rounded-2xl border-4 border-amber-400/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 shadow-[0_0_40px_rgba(251,191,36,0.45)] flex items-center justify-center overflow-hidden mb-4 upgrade-card-shine"></div>
+            <div id="upgrade-celebration-title" class="text-xl sm:text-2xl font-black text-center text-amber-100 drop-shadow-md px-2"></div>
+            <div class="mt-2 text-sm text-slate-400 text-center font-bold">Equipped on your hero</div>
+        </div>
+    </div>
+
+    <!-- PRACTICE MODE (MCQ, non-combat) -->
+    <div id="practice-overlay" class="hidden fixed inset-0 bg-black/80 z-[250] flex items-center justify-center p-4">
+        <div class="w-full max-w-xl bg-slate-950 border border-slate-700 rounded-2xl shadow-2xl p-4 sm:p-6">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-slate-400 font-bold">Practice</div>
+                    <div class="text-lg sm:text-xl font-black text-slate-100">Multiple Choice Warm-up</div>
+                    <div class="text-[12px] text-slate-400 mt-1">This does not affect battle damage. Use it to build speed.</div>
+                </div>
+                <button type="button" onclick="closePracticeMode()" class="bg-slate-800 border border-slate-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-slate-700">Close</button>
+            </div>
+            <div id="practice-question-text" class="mt-4 text-yellow-200 font-bold text-lg text-center"></div>
+            <div id="practice-visual-container" class="w-full max-w-md mx-auto my-2 min-h-0"></div>
+            <div id="practice-mcq-grid" class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+            <div id="practice-feedback" class="mt-4 text-center text-sm font-bold text-slate-200"></div>
+            <div class="mt-4 flex justify-center">
+                <button type="button" id="practice-next-btn" onclick="nextPracticeQuestion()" class="bg-indigo-600 hover:bg-indigo-500 px-5 py-3 rounded-xl font-black uppercase disabled:opacity-50 disabled:pointer-events-none">Next</button>
+            </div>
+        </div>
+    </div>

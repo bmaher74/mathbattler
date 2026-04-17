@@ -158,6 +158,24 @@ describe("CombatQuestionSchema", () => {
         assert.ok(String(q.text).includes("\\(x+1=5\\)"));
     });
 
+    it("allows prose numbers grounded in ideal/expected when not all appear in displayed math", () => {
+        const r = CombatQuestionSchema.safeParse({
+            criterion: "a",
+            topic_category: "Arithmetic",
+            text: "A 25% discount is applied to a \\$75 shirt. The sale price in dollars is \\(75 - 0.25 \\times 75\\).",
+            expected_answer: "56.25",
+            success_criteria: "- Use the discount model.\n- State the final price.",
+            ideal_explanation:
+                "25% means \\(0.25\\). Discount \\(0.25 \\times 75 = 18.75\\). Final price \\(75 - 18.75 = 56.25\\) dollars.",
+            visual_type: "none",
+            visual_spec: null,
+            plotly_spec: "",
+            type: "input"
+        });
+        assert.equal(r.success, true);
+        assert.doesNotThrow(() => finalizeCombatQuestion({ ...r.data }));
+    });
+
     it("rejects both text and text_blocks", () => {
         const r = CombatQuestionSchema.safeParse({
             criterion: "a",
@@ -347,6 +365,11 @@ describe("llmProseSanitize / accidental math wrapping", () => {
 
     it("sanitizeLlmProseString rewrites paired dollar math to \\(...\\)", () => {
         assert.ok(sanitizeLlmProseString("Solve $x+1$.").includes("\\(x+1\\)"));
+    });
+
+    it("sanitizeLlmProseString rewrites $n \\\\leq n$ inequalities (not currency $n)", () => {
+        const s = sanitizeLlmProseString("Since $26 \\leq 30$, Brendan can afford.");
+        assert.ok(s.includes("\\(26 \\leq 30\\)"), s);
     });
 
     it("sanitizeLlmProseString leaves unpaired currency dollars", () => {

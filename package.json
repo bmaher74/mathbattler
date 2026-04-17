@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "build": "npm run build:css && node scripts/generate-runtime-config.mjs",
+    "dev:web": "npm run build:css && cd web && npm run dev",
+    "build:web": "npm run build:css && node scripts/generate-runtime-config.mjs && cd web && npm run build",
+    "preview:web": "cd web && npm run preview",
     "build:css": "tailwindcss -i ./tailwind.input.css -o ./tailwind.css --minify",
     "validate-llm": "node scripts/validate-llm.mjs",
     "test": "node --test scripts/test-ai-schemas.mjs test/*.test.mjs",

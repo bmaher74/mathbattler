@@ -1,4 +1,5 @@
 node_modules/
+web/dist/
 # runtime-config.js is committed as an empty stub so Netlify deploy includes it (gitignored
 # artifacts can be omitted from the publish bundle). `npm run build` overwrites from .env / CI env.
 .env
@@ -12,6 +13,9 @@ logs/
 .agents/
 .claude/
 .cursor/
+.skills/
+skills/
+skills-lock.json
 
 # AI packing artifacts (can contain secrets)
 repomix-output.xml

@@ -42,22 +42,29 @@ function extractMathSegmentsFromTextStem(stem) {
     return { math: math.join("\n"), prose: prose.join("\n") };
 }
 
-function assertProseNumbersAppearInMath({ prose, math }) {
+/**
+ * Story prose may repeat quantities that appear only in the canonical answer or rubric lines,
+ * not only inside \\(...\\) / inline_math (e.g. "56.25 total" while the displayed equation is symbolic).
+ */
+function assertProseNumbersAppearInMath({ prose, math, groundingText }) {
     const proseNums = extractNumericTokens(prose);
     if (proseNums.size === 0) return;
     const mathNums = extractNumericTokens(math);
-    // Only enforce when the question actually presents formal math text (equation/expressions).
-    // Some valid stems are pure prose (no inline equation shown) and should not be rejected here.
+    const groundingNums = extractNumericTokens(groundingText ?? "");
+    // Only enforce when the stem shows formal inline math with digits (same gate as before).
+    // Stems like `Compute $2+2$` may leave numbers only in prose segments until delimiters normalize.
     if (mathNums.size === 0) return;
+
+    const allowed = new Set([...mathNums, ...groundingNums]);
 
     /** @type {string[]} */
     const missing = [];
     for (const n of proseNums) {
-        if (!mathNums.has(n)) missing.push(n);
+        if (!allowed.has(n)) missing.push(n);
     }
     if (missing.length) {
         throw new Error(
-            "Numeric consistency: story prose contains numbers not present in the formal math (" +
+            "Numeric consistency: story prose contains numbers not grounded in math / answer / criteria / ideal (" +
                 missing.slice(0, 8).join(", ") +
                 (missing.length > 8 ? ", …" : "") +
                 ")"
@@ -152,9 +159,12 @@ export function finalizeCombatQuestion(q) {
         }
     }
 
-    // Enforce that story prose numbers are grounded in the formal math presented to the student.
-    // This intentionally rejects "flavor numbers" because they frequently drift from the equation.
+    // Enforce that story prose numbers appear in formal math and/or the declared answer, criteria,
+    // or ideal explanation (models often restate quantities outside the displayed equation).
     try {
+        const numericGrounding = [q.expected_answer, q.success_criteria, q.ideal_explanation]
+            .filter(Boolean)
+            .join("\n");
         if (Array.isArray(q.text_blocks) && q.text_blocks.length > 0) {
             const prose = q.text_blocks
                 .filter((b) => b && b.type === "prose")
@@ -164,10 +174,10 @@ export function finalizeCombatQuestion(q) {
                 .filter((b) => b && b.type === "inline_math")
                 .map((b) => String(b.latex ?? ""))
                 .join("\n");
-            assertProseNumbersAppearInMath({ prose, math });
+            assertProseNumbersAppearInMath({ prose, math, groundingText: numericGrounding });
         } else {
             const seg = extractMathSegmentsFromTextStem(q.text);
-            assertProseNumbersAppearInMath(seg);
+            assertProseNumbersAppearInMath({ ...seg, groundingText: numericGrounding });
         }
         assertInlineMathMatchesExpectedAnswerIfPureNumeric(q);
     } catch (e) {

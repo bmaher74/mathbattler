@@ -117,6 +117,25 @@ function collapseDisplayMathToInline(s) {
 }
 
 /**
+ * True when a TeX control sequence appears before the next unescaped `$`.
+ * Distinguishes `$26 \\leq 30$` (math) from `$26 per person` (currency + prose).
+ */
+function hasTexCommandBeforeNextDollar(str, fromIndex) {
+    let j = fromIndex;
+    while (j < str.length) {
+        if (str[j] === "\\" && str[j + 1] === "$") {
+            j += 2;
+            continue;
+        }
+        if (str[j] === "$") {
+            return /\\[a-zA-Z]+/.test(str.slice(fromIndex, j));
+        }
+        j++;
+    }
+    return false;
+}
+
+/**
  * After $ and a numeric run, decide if unpaired text is money ($14 per) vs prose that starts with a number ($2 for the school…$).
  * Paired $n$ is handled by the caller before this (immediate closing $).
  */
@@ -124,6 +143,7 @@ function looksLikeUnpairedCurrencyAfterDollarNumber(str, indexAfterNumericRun) {
     const nextCh = indexAfterNumericRun < str.length ? str[indexAfterNumericRun] : "";
     if (nextCh === "$") return true;
     if (/[A-Za-z:]/.test(nextCh)) return false;
+    if (hasTexCommandBeforeNextDollar(str, indexAfterNumericRun)) return false;
     const w = str.slice(indexAfterNumericRun).match(/^\s*([a-z]{2,})/i);
     if (!w) return true;
     const word = w[1].toLowerCase();
