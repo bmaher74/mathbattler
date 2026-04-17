@@ -1,35 +1,25 @@
-import { useLayoutEffect, useRef } from "react";
+import { useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import bodyContent from "@/legacy/bodyContent.html?raw";
-
-let legacyMainAttached = false;
+import { buildLegacyEmbedHtml } from "./buildLegacyEmbedHtml";
 
 /**
- * Injects the legacy `index.html` body markup and loads `js/main.js` as a module.
- * Kept behind React Router as the `*` route so future screens can mount beside or instead of this shell.
+ * Classic client in an isolated iframe so each visit to `/game` gets a fresh `js/main.js` realm
+ * (avoids stale DOM after SPA navigation away and back).
  */
 export default function LegacyGameShell() {
-    const ref = useRef<HTMLDivElement>(null);
-
-    useLayoutEffect(() => {
-        const host = ref.current;
-        if (!host || legacyMainAttached) return;
-
-        host.innerHTML = bodyContent;
-        legacyMainAttached = true;
-
-        const script = document.createElement("script");
-        script.type = "module";
-        const base = import.meta.env.BASE_URL.endsWith("/")
-            ? import.meta.env.BASE_URL
-            : `${import.meta.env.BASE_URL}/`;
-        script.src = `${base}js/main.js`;
-        document.body.appendChild(script);
-    }, []);
+    const { key } = useLocation();
+    const iframeKey = key ?? "default";
+    const base =
+        import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+    const srcDoc = useMemo(() => buildLegacyEmbedHtml(bodyContent, base), [base]);
 
     return (
-        <div
-            ref={ref}
-            className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-gray-900 font-sans text-white"
+        <iframe
+            key={iframeKey}
+            title="Math Creature Battler — classic client"
+            className="block h-dvh min-h-0 w-full max-w-full flex-none border-0 bg-gray-900"
+            srcDoc={srcDoc}
         />
     );
 }

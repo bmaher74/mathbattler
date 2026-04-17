@@ -29,6 +29,9 @@ export default function MigrationNav() {
                 <Link className={linkCls} to="/migration/hud">
                     HUD preview
                 </Link>
+                <Link className={linkCls} to="/migration/battle">
+                    Battle stub
+                </Link>
             </nav>
         </header>
     );

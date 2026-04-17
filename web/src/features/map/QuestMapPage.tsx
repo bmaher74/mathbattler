@@ -27,8 +27,8 @@ export default function QuestMapPage() {
                 <div>
                     <h1 className="text-xl font-black text-slate-100">Quest map (React)</h1>
                     <p className="text-xs text-slate-400">
-                        Tap a node, then open the classic client — it will pre-start that level after you log in (if
-                        unlocked).
+                        Tap a node, then open the classic client at /game (iframe) — it will pre-start that level after
+                        you log in (if unlocked).
                     </p>
                 </div>
                 <Link

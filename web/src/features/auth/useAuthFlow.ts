@@ -24,7 +24,7 @@ export function readPlayerNamePrefill(): string | null {
 
 /**
  * Minimal “auth flow” for the migration shell: collect display name and pass it to the classic client.
- * Full Firebase Auth remains in legacy `main.js` (gstatic) until a single bundled SDK path exists.
+ * Full Firebase Auth still initializes in legacy `main.js` inside the `/game` iframe; unify with `firebase` npm + token bridge next.
  */
 export function useAuthFlow() {
     const [playerName, setPlayerName] = useState(() => readPlayerNamePrefill() ?? "");

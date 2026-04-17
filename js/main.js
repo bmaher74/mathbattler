@@ -64,6 +64,7 @@ import {
     MB_REACT_RETURN_AFTER_OVERLAY_KEY
 } from "./game/constants.js";
 import { isSafeInternalAssignPath } from "./game/safeInternalNavPath.js";
+import { flushReactParentHudSnapshot, scheduleReactParentHudSnapshot } from "./game/reactParentBridge.js";
 
 import { proseWithMathToHtml, escapeHtmlText } from "./ai/displayMathProse.js";
 import { parseAndValidate, extractJsonFromModelText, parseJsonLenient } from "./ai/parseModelJson.js";
@@ -319,6 +320,7 @@ function logCombatQuestionLlmExchange(systemText, userText, assistantText) {
     return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
 }
  function updateCloudSyncBadge() {
+    scheduleReactParentHudSnapshot();
     const root = document.getElementById("cloud-sync-badge");
     const l1 = document.getElementById("cloud-sync-badge-line1");
     const l2 = document.getElementById("cloud-sync-badge-line2");
@@ -835,6 +837,7 @@ function processEngagementLoginSession() {
     if (state.playerName) saveLocalProfile(state.playerName);
 }
 function syncEngagementHud() {
+    scheduleReactParentHudSnapshot();
     const eg = state.engagement;
     const streakEl = document.getElementById("map-streak-line");
     if (streakEl) {
@@ -1294,6 +1297,7 @@ function applyReactBridgePrefill() {
     });
     showCloudSyncBadge();
     syncQuestionsApiBadge();
+    flushReactParentHudSnapshot();
     startCloudSyncHeartbeat();
     void syncCurrentProfileToCloud();
     const pendingStart = readPendingStartLevelFromBridge();
@@ -1654,6 +1658,7 @@ function invalidateCombatQuestionPrefetch() {
     }
 }
  function syncAiRouteNotice() {
+    scheduleReactParentHudSnapshot();
     if (isProductionUi()) return;
     const el = document.getElementById("ai-route-notice");
     if (!el) return;
@@ -1666,6 +1671,7 @@ function invalidateCombatQuestionPrefetch() {
     }
 }
  function syncMapQuestionBufferHint() {
+    scheduleReactParentHudSnapshot();
     if (isProductionUi()) return;
     const el = document.getElementById("map-question-buffer-hint");
     if (!el) return;
@@ -1732,6 +1738,7 @@ function invalidateCombatQuestionPrefetch() {
     }
 }
  function syncQuestionsApiBadge() {
+    scheduleReactParentHudSnapshot();
     if (isProductionUi()) return;
     const root = document.getElementById("ai-questions-status");
     const l2 = document.getElementById("ai-status-line2");
@@ -1945,6 +1952,7 @@ function invalidateCombatQuestionPrefetch() {
     syncMapQuestionBufferHint();
     syncEngagementHud();
     syncQuestionsApiBadge();
+    flushReactParentHudSnapshot();
      // Non-blocking: generate bosses for newly visible infinite levels (so map portraits/names fill in).
     const targets = [];
     for (let lv = Math.max(11, state.unlockedLevels); lv <= Math.max(11, state.unlockedLevels + 2); lv++) targets.push(lv);
@@ -3702,4 +3710,9 @@ state.bossCacheByLevel = loadBossCache();
 if (!isProductionUi()) runRegressions();
 initFirebase();
 tryConsumeMapOverlayQuery();
+try {
+    window.addEventListener("pagehide", () => flushReactParentHudSnapshot());
+} catch (_) {
+    /* ignore */
+}
     

@@ -8,6 +8,7 @@ import MapUpgradesPage from "@/features/map/MapUpgradesPage";
 import MapPracticePage from "@/features/map/MapPracticePage";
 import AudioSettingsPage from "@/features/map/AudioSettingsPage";
 import HudPreviewPage from "@/features/migration/HudPreviewPage";
+import MigrationBattleStubPage from "@/features/migration/MigrationBattleStubPage";
 
 export default function App() {
     return (
@@ -21,6 +22,7 @@ export default function App() {
                 <Route path="map" element={<QuestMapPage />} />
                 <Route path="settings/audio" element={<AudioSettingsPage />} />
                 <Route path="migration/hud" element={<HudPreviewPage />} />
+                <Route path="migration/battle" element={<MigrationBattleStubPage />} />
                 <Route path="game/*" element={<LegacyGameShell />} />
                 <Route path="*" element={<Navigate to="/game" replace />} />
             </Route>

@@ -1,5 +1,6 @@
 import { Outlet } from "react-router-dom";
 import MigrationNav from "@/components/MigrationNav";
+import LegacyHudBridge from "@/features/migration/LegacyHudBridge";
 
 /**
  * Top-level route shell: safe area, global chrome, error boundaries can wrap here later.
@@ -8,6 +9,7 @@ import MigrationNav from "@/components/MigrationNav";
 export default function RootLayout() {
     return (
         <div className="flex min-h-dvh flex-col bg-slate-950 text-slate-100">
+            <LegacyHudBridge />
             <MigrationNav />
             <div className="min-h-0 flex-1">
                 <Outlet />
