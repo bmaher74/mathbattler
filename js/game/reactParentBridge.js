@@ -1,4 +1,7 @@
-/** Debounced snapshot of map HUD text nodes → React parent (`postMessage`) when embedded in an iframe. */
+/**
+ * Debounced snapshot of map HUD text nodes → React parent (`postMessage`) when embedded in an iframe.
+ * `MB_LEGACY_POSTMESSAGE_SOURCE` is shared with other legacy → parent messages (e.g. sign-out).
+ */
 
 export const MB_LEGACY_POSTMESSAGE_SOURCE = "mathbattler-legacy";
 

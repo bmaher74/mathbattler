@@ -986,7 +986,10 @@
             const app = initializeApp(JSON.parse(__firebase_config));
             auth = getAuth(app);
             db = getFirestore(app);
-            await (typeof __initial_auth_token !== "undefined" ? signInWithCustomToken(auth, __initial_auth_token) : signInAnonymously(auth));
+            await auth.authStateReady();
+            if (!auth.currentUser) {
+                await (typeof __initial_auth_token !== "undefined" ? signInWithCustomToken(auth, __initial_auth_token) : signInAnonymously(auth));
+            }
             currentUser = auth.currentUser;
 
             const testRef = doc(db, "artifacts", appId, "public", "data", "healthcheck", "status");

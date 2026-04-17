@@ -15,10 +15,14 @@
 # Firebase Console → Authentication → Settings → Authorized domains:
 # - <your-site>.netlify.app
 # - your custom domain(s) once DNS points here
+#
+# Build settings: if "Build command" / "Publish directory" are empty in the Netlify UI, these values apply.
+# See https://app.netlify.com/projects/mathbattler/configuration/deploys#build-settings
 
 [build]
-  command = "npm run build"
-  publish = "."
+  # React + Vite shell + legacy assets copied into web/dist (see web/scripts/copy-legacy-assets.mjs).
+  command = "npm ci && npm ci --prefix web && npm run build:web"
+  publish = "web/dist"
 
 [build.environment]
   NODE_VERSION = "20"
@@ -48,3 +52,9 @@
   for = "/js/main.js"
   [headers.values]
     Cache-Control = "no-store"
+
+# React Router (client-side routes under publish = web/dist).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

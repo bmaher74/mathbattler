@@ -1,15 +1,36 @@
 import { useEffect } from "react";
 import { isLegacyHudSnapshot, MB_LAST_HUD_SNAPSHOT_KEY } from "@/features/migration/legacyHudSnapshot";
+import { signOutShellFirebase } from "@/lib/firebaseWeb";
 
 const SOURCE = "mathbattler-legacy";
 
-/** Forwards iframe `postMessage` HUD snapshots to a same-tab `CustomEvent` + sessionStorage for later routes. */
+function isTrustedLegacyMessageOrigin(origin: string): boolean {
+    if (origin === window.location.origin) return true;
+    // `about:srcdoc` sometimes reports the serialized origin as the string "null" while still being our iframe.
+    if (origin === "null") return true;
+    return false;
+}
+
+/**
+ * `postMessage` from the classic `/game` iframe: HUD snapshots and map logout.
+ * Rejects cross-site origins; allows this app origin and the common srcdoc serialized origin.
+ */
 export default function LegacyHudBridge() {
     useEffect(() => {
         function onMessage(ev: MessageEvent) {
+            if (!isTrustedLegacyMessageOrigin(ev.origin)) return;
             const d = ev.data;
-            if (!d || typeof d !== "object") return;
-            if (d.source !== SOURCE || d.type !== "hud-snapshot") return;
+            if (!d || typeof d !== "object" || d.source !== SOURCE) return;
+
+            if (d.type === "request-sign-out") {
+                void (async () => {
+                    await signOutShellFirebase();
+                    window.location.assign("/signin");
+                })();
+                return;
+            }
+
+            if (d.type !== "hud-snapshot") return;
             const payload = d.payload;
             if (!isLegacyHudSnapshot(payload)) return;
             try {

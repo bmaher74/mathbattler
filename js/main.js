@@ -64,7 +64,11 @@ import {
     MB_REACT_RETURN_AFTER_OVERLAY_KEY
 } from "./game/constants.js";
 import { isSafeInternalAssignPath } from "./game/safeInternalNavPath.js";
-import { flushReactParentHudSnapshot, scheduleReactParentHudSnapshot } from "./game/reactParentBridge.js";
+import {
+    flushReactParentHudSnapshot,
+    MB_LEGACY_POSTMESSAGE_SOURCE,
+    scheduleReactParentHudSnapshot
+} from "./game/reactParentBridge.js";
 
 import { proseWithMathToHtml, escapeHtmlText } from "./ai/displayMathProse.js";
 import { parseAndValidate, extractJsonFromModelText, parseJsonLenient } from "./ai/parseModelJson.js";
@@ -1148,7 +1152,10 @@ function setRegressionVaultSkipped() {
     callVaultHealthcheck = httpsCallable(functionsApi, "vaultHealthcheck");
     callGetPlayerProfile = httpsCallable(functionsApi, "getPlayerProfile");
     callSetPlayerProfile = httpsCallable(functionsApi, "setPlayerProfile");
-    await (typeof __initial_auth_token !== "undefined" ? signInWithCustomToken(auth, __initial_auth_token) : signInAnonymously(auth));
+    await auth.authStateReady();
+    if (!auth.currentUser) {
+        await (typeof __initial_auth_token !== "undefined" ? signInWithCustomToken(auth, __initial_auth_token) : signInAnonymously(auth));
+    }
     currentUser = auth.currentUser;
     await callVaultHealthcheck({ appId });
     isFirebaseReady = true;
@@ -3697,6 +3704,28 @@ function wireMapHudButtons() {
         void window.openPracticeMode();
     });
     document.getElementById("map-btn-logout")?.addEventListener("click", () => {
+        try {
+            if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                const o =
+                    typeof location !== "undefined" && location.origin && location.origin !== "null"
+                        ? location.origin
+                        : "*";
+                try {
+                    window.parent.postMessage(
+                        { source: MB_LEGACY_POSTMESSAGE_SOURCE, type: "request-sign-out", ts: Date.now() },
+                        o
+                    );
+                } catch (_) {
+                    window.parent.postMessage(
+                        { source: MB_LEGACY_POSTMESSAGE_SOURCE, type: "request-sign-out", ts: Date.now() },
+                        "*"
+                    );
+                }
+                return;
+            }
+        } catch (_) {
+            /* fall through */
+        }
         location.reload();
     });
 }

@@ -23,8 +23,9 @@ export function readPlayerNamePrefill(): string | null {
 }
 
 /**
- * Minimal “auth flow” for the migration shell: collect display name and pass it to the classic client.
- * Full Firebase Auth still initializes in legacy `main.js` inside the `/game` iframe; unify with `firebase` npm + token bridge next.
+ * Display name for the classic login form: stored in sessionStorage for `applyReactBridgePrefill` in `js/main.js`.
+ * Firebase Auth (anonymous by default) is established in the React shell via `ensureShellAuthBootstrap` in
+ * `firebaseWeb.ts` so the `/game` iframe reuses the same persisted session (same origin).
  */
 export function useAuthFlow() {
     const [playerName, setPlayerName] = useState(() => readPlayerNamePrefill() ?? "");
